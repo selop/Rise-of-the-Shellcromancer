@@ -30,20 +30,20 @@ uv run python -m shellcromancer.app
 
 ## Controls
 
-- `up` / `down`: select a row
-- `k` / `j`: select a row
-- `left` / `right`: select a column
-- `h` / `l`: select a column
-- `enter`: create or use the selected creature, building, or action
+- `tab` / mouse: move between controls and tabs
+- `up` / `down`: select a shop row within the current column
+- `left` / `right`: move between the unit, building, and action shop columns
+- `enter`: create or use the selected shop item
+- `e`: create or use the selected shop item
 - `r`: start a new run after game over
 - `q`: quit
 
-The unit and building overview acts as the create menu. Green entries are ready,
-and red entries are missing required resources or workers. The cost panel below
-the overview only shows the cost for the currently selected entry.
+The Resources tab shows current stores, per-second changes, and separate owned
+unit and building lists. The Shop tab splits units, buildings, and actions into
+three columns. Green entries are ready to buy or use, while blocked entries are
+red and cooldowns are yellow.
 
-The Actions column contains one-time actions. Cooldowns are shown behind the
-action name.
+Only the currently selected shop item shows its recipe or cost below the shop.
 
 Game progress is saved automatically to the Linux XDG data directory. By
 default, the save file is `~/.local/share/shellcromancer/save.json`; if

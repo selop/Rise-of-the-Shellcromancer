@@ -1,35 +1,43 @@
+import asyncio
 import json
 
-from shellcromancer.actions import HUNT_ACTION_KEY, KINDLE_PYRE_ACTION_KEY, PATROL_ACTION_KEY
+from textual.widgets import DataTable, Static, TabbedContent
+
+from shellcromancer.actions import (
+    HUNT_ACTION_KEY,
+    KINDLE_PYRE_ACTION_KEY,
+    PATROL_ACTION_KEY,
+)
 from shellcromancer.app import (
     MENU_ACTIONS,
     ShellcromancerApp,
+    action_status_style,
     action_index,
     is_action_affordable,
     render_state,
 )
+from shellcromancer.buildings import BuildingType
 from shellcromancer.game_state import GameState
 from shellcromancer.resources import ResourceType
 from shellcromancer.units import UnitType
-from shellcromancer.buildings import BuildingType
 
 
-def test_render_state_shows_keybindings_and_only_implemented_features() -> None:
+def test_render_state_snapshot_only_shows_implemented_features() -> None:
     rendered = render_state(GameState())
 
-    assert "Keybindings" in rendered
-    assert "enter" in rendered
+    assert "Resources Tab" in rendered
+    assert "Shop Tab" in rendered
     assert "Future PvE Targets" not in rendered
     assert "Village" not in rendered
 
 
-def test_render_state_lists_creatures_and_buildings_in_overview() -> None:
+def test_render_state_lists_units_buildings_and_actions() -> None:
     rendered = render_state(GameState())
 
-    assert "Overview" in rendered
-    assert "Creatures" in rendered
+    assert "Units" in rendered
     assert "Buildings" in rendered
     assert "Actions" in rendered
+    assert "Creature" not in rendered
     assert "Worker" in rendered
     assert "Farm" in rendered
     assert "Mine" in rendered
@@ -65,20 +73,55 @@ def test_render_state_shows_gold_resource() -> None:
     assert "gold      0.0   (+0.0/s)" in rendered
 
 
-def test_render_state_uses_bordered_panels() -> None:
-    rendered = render_state(GameState())
+def test_app_uses_resource_and_shop_tabs(tmp_path) -> None:
+    async def run_app() -> None:
+        app = ShellcromancerApp(save_path=tmp_path / "save.json")
+        async with app.run_test() as pilot:
+            await pilot.pause()
 
-    assert "+ Resources" in rendered
-    assert "+ Overview" in rendered
-    assert "+ Selected" in rendered
+            tabs = app.query_one(TabbedContent)
+            resource_table = app.query_one("#resource-table", DataTable)
+            unit_table = app.query_one("#unit-table", DataTable)
+            building_table = app.query_one("#building-table", DataTable)
+            shop_view = app.query_one("#shop-view", Static)
+
+            assert tabs.active == "resources-tab"
+            assert resource_table.row_count == len(ResourceType)
+            assert unit_table.row_count == len(UnitType)
+            assert building_table.row_count == len(BuildingType)
+            assert unit_table.get_row_at(0) == ["Worker", "0"]
+            assert building_table.get_row_at(0) == ["Farm", "0"]
+            assert str(shop_view.content).startswith("Units")
+
+    asyncio.run(run_app())
 
 
-def test_render_state_only_shows_selected_cost_below_overview() -> None:
+def test_shop_tab_keeps_initial_selection_buyable(tmp_path) -> None:
+    async def run_app() -> None:
+        app = ShellcromancerApp(save_path=tmp_path / "save.json")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            tabs = app.query_one(TabbedContent)
+            tabs.active = "shop-tab"
+            await pilot.pause()
+
+            assert app.selected_action_index == action_index(0, 0)
+            await pilot.press("e")
+            await pilot.pause()
+
+            assert app.state.units[UnitType.WORKER] == 1
+
+    asyncio.run(run_app())
+
+
+def test_render_state_only_shows_selected_recipe() -> None:
     rendered = render_state(GameState())
 
     assert "Selected" in rendered
     assert "Cost: 10 shell" in rendered
     assert rendered.count("Cost:") == 1
+    assert "1 worker, 5 iron, 5 shell" not in rendered
 
 
 def test_render_state_marks_affordable_and_unaffordable_actions() -> None:
@@ -89,6 +132,29 @@ def test_render_state_marks_affordable_and_unaffordable_actions() -> None:
 
     assert "[green]Ready[/]" in worker_rendered
     assert "[red]Missing requirements[/]" in farm_rendered
+
+
+def test_action_status_style_marks_buyable_and_blocked_items() -> None:
+    state = GameState()
+    worker = next(action for action in MENU_ACTIONS if action.label == "Worker")
+    farm = next(action for action in MENU_ACTIONS if action.label == "Farm")
+
+    assert action_status_style(state, worker) == "green"
+    assert action_status_style(state, farm) == "red"
+
+
+def test_shop_keyboard_navigation_moves_inside_columns(tmp_path) -> None:
+    app = ShellcromancerApp(save_path=tmp_path / "save.json")
+    app.selected_action_index = action_index(1, 0)
+
+    app.action_select_next()
+    assert app.selected_action_index == action_index(1, 1)
+
+    app.action_select_right()
+    assert app.selected_action_index == action_index(2, 1)
+
+    app.action_select_previous()
+    assert app.selected_action_index == action_index(2, 0)
 
 
 def test_render_state_shows_hunt_cooldown_behind_action() -> None:
@@ -213,7 +279,7 @@ def test_dead_state_renders_game_over_and_restart_key() -> None:
 
     assert "Game Over" in rendered
     assert "Food reached 0" in rendered
-    assert "r                  Start a new run" in rendered
+    assert "Press r to start a new run" in rendered
     assert "The stores are empty." in rendered
 
 

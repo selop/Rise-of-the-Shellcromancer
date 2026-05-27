@@ -1,12 +1,20 @@
 from dataclasses import dataclass
 from pathlib import Path
-from textwrap import wrap
 from typing import Callable
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
-from textual.widgets import Static
+from textual.containers import Horizontal, Vertical
+from textual.widgets import (
+    Button,
+    DataTable,
+    Footer,
+    Header,
+    Static,
+    TabbedContent,
+    TabPane,
+)
 
 from shellcromancer import actions
 from shellcromancer.buildings import BuildingType
@@ -169,26 +177,68 @@ ONE_TIME_ACTIONS = (
 
 MENU_COLUMNS = (UNIT_ACTIONS, BUILDING_ACTIONS, ONE_TIME_ACTIONS)
 MENU_ACTIONS = tuple(action for column in MENU_COLUMNS for action in column)
-PANEL_WIDTH = 78
+SHOP_COLUMN_LABELS = ("Units", "Buildings", "Actions")
 
 
 class ShellcromancerApp(App[None]):
+    TITLE = "Rise of the Shellcromancer"
+
     CSS = """
     Screen {
-        padding: 1 2;
+        layout: vertical;
     }
 
-    #game {
+    TabbedContent {
+        height: 1fr;
+    }
+
+    DataTable {
         width: 100%;
+    }
+
+    .overview-assets {
+        height: auto;
+    }
+
+    .overview-column {
+        width: 1fr;
+        height: auto;
+    }
+
+    #shop-view {
+        padding: 1;
+        height: auto;
+    }
+
+    #status {
+        dock: bottom;
+        height: auto;
+        padding: 1 2;
+        border-top: solid $surface-lighten-1;
+    }
+
+    .section-title {
+        padding: 1 1 0 1;
+        text-style: bold;
+    }
+
+    #selected {
+        padding: 1 1;
+        min-height: 4;
+    }
+
+    #execute {
+        margin: 0 1 1 1;
     }
     """
 
     BINDINGS = [
-        Binding("up,k", "select_previous", "Previous action"),
-        Binding("down,j", "select_next", "Next action"),
-        Binding("left,h", "select_left", "Left column"),
-        Binding("right,l", "select_right", "Right column"),
-        Binding("enter", "execute_selected", "Execute selected"),
+        Binding("up,k", "select_previous", "Previous row", priority=True),
+        Binding("down,j", "select_next", "Next row", priority=True),
+        Binding("left,h", "select_left", "Previous column", priority=True),
+        Binding("right,l", "select_right", "Next column", priority=True),
+        Binding("enter", "execute_selected", "Use selected", priority=True),
+        Binding("e", "execute_selected", "Use selected", priority=True),
         Binding("r", "reset", "Restart after death"),
         Binding("q", "quit", "Quit"),
     ]
@@ -199,13 +249,48 @@ class ShellcromancerApp(App[None]):
         self.state = load_state(self.save_path)
         mark_dead_if_food_depleted(self.state)
         self.selected_action_index = 0
-        self.game_view = Static(id="game")
+        self.resource_table = DataTable(
+            id="resource-table", cursor_type="row", zebra_stripes=True
+        )
+        self.unit_table = DataTable(
+            id="unit-table", cursor_type="row", zebra_stripes=True
+        )
+        self.building_table = DataTable(
+            id="building-table", cursor_type="row", zebra_stripes=True
+        )
+        self.shop_view = Static(id="shop-view")
+        self.selected_view = Static(id="selected")
+        self.status_view = Static(id="status")
+        self.execute_button = Button(
+            "Use Selected", id="execute", variant="primary", action="execute_selected"
+        )
+        self.tables_ready = False
 
     def compose(self) -> ComposeResult:
-        with Vertical():
-            yield self.game_view
+        yield Header(show_clock=True)
+        with TabbedContent(initial="resources-tab"):
+            with TabPane("Resources", id="resources-tab"):
+                yield Static("Resources", classes="section-title")
+                yield self.resource_table
+                with Horizontal(classes="overview-assets"):
+                    with Vertical(classes="overview-column"):
+                        yield Static("Units", classes="section-title")
+                        yield self.unit_table
+                    with Vertical(classes="overview-column"):
+                        yield Static("Buildings", classes="section-title")
+                        yield self.building_table
+            with TabPane("Shop", id="shop-tab"):
+                yield self.shop_view
+                yield self.selected_view
+                yield self.execute_button
+        yield self.status_view
+        yield Footer()
 
     def on_mount(self) -> None:
+        self.resource_table.add_columns("Resource", "Amount", "Per Second")
+        self.unit_table.add_columns("Unit", "Owned")
+        self.building_table.add_columns("Building", "Owned")
+        self.tables_ready = True
         self._refresh_view()
         self.set_interval(1.0, self._on_tick)
 
@@ -256,7 +341,60 @@ class ShellcromancerApp(App[None]):
         self._refresh_view()
 
     def _refresh_view(self) -> None:
-        self.game_view.update(render_state(self.state, self.selected_action_index))
+        if not self.tables_ready:
+            return
+
+        self._refresh_resource_table()
+        self._refresh_unit_table()
+        self._refresh_building_table()
+        self._refresh_shop_view()
+        self._refresh_selected_view()
+        self._refresh_status_view()
+
+    def _refresh_resource_table(self) -> None:
+        self.resource_table.clear()
+        for resource in ALL_RESOURCES:
+            self.resource_table.add_row(
+                resource.value,
+                f"{self.state.resources[resource]:.1f}",
+                f"{self.state.last_delta[resource]:+.1f}/s",
+            )
+
+    def _refresh_unit_table(self) -> None:
+        self.unit_table.clear()
+        for menu_action, unit_type in zip(UNIT_ACTIONS, UnitType, strict=True):
+            self.unit_table.add_row(menu_action.label, str(self.state.units[unit_type]))
+
+    def _refresh_building_table(self) -> None:
+        self.building_table.clear()
+        for menu_action, building_type in zip(
+            BUILDING_ACTIONS, BuildingType, strict=True
+        ):
+            self.building_table.add_row(
+                menu_action.label, str(self.state.buildings[building_type])
+            )
+
+    def _refresh_shop_view(self) -> None:
+        self.shop_view.update(format_shop_text(self.state, self.selected_action_index))
+
+    def _refresh_selected_view(self) -> None:
+        menu_action = selected_action(self.selected_action_index)
+        readiness = action_status_label(self.state, menu_action)
+        self.selected_view.update(
+            f"{menu_action.label}: {readiness}\nCost: {menu_action.cost}"
+        )
+        self.execute_button.disabled = self.state.is_dead or not is_action_affordable(
+            self.state, menu_action
+        )
+
+    def _refresh_status_view(self) -> None:
+        if self.state.is_dead:
+            self.status_view.update(
+                f"[red]Game Over[/]\n{self.state.last_action_message}\nPress r to start a new run."
+            )
+            return
+
+        self.status_view.update(f"Last action: {self.state.last_action_message}")
 
 
 def is_action_affordable(state: GameState, menu_action: MenuAction) -> bool:
@@ -281,15 +419,42 @@ def is_action_affordable(state: GameState, menu_action: MenuAction) -> bool:
     return has_resources and has_units and has_buildings and cooldown_ready
 
 
-def action_status_label(state: GameState, menu_action: MenuAction) -> str:
+def action_status_text(state: GameState, menu_action: MenuAction) -> str:
     if menu_action.cooldown_key is not None:
         cooldown = state.action_cooldowns.get(menu_action.cooldown_key, 0.0)
         if cooldown > 0:
-            return f"[red]Cooldown {format_cooldown(cooldown)}[/]"
+            return f"Cooldown {format_cooldown(cooldown)}"
 
     if is_action_affordable(state, menu_action):
+        return "Ready"
+    return "Missing requirements"
+
+
+def action_status_style(state: GameState, menu_action: MenuAction) -> str:
+    if is_action_affordable(state, menu_action):
+        return "green"
+    if menu_action.cooldown_key is not None:
+        cooldown = state.action_cooldowns.get(menu_action.cooldown_key, 0.0)
+        if cooldown > 0:
+            return "yellow"
+    return "red"
+
+
+def action_status_label(state: GameState, menu_action: MenuAction) -> str:
+    status = action_status_text(state, menu_action)
+    if status == "Ready":
         return "[green]Ready[/]"
-    return "[red]Missing requirements[/]"
+    if status.startswith("Cooldown"):
+        return f"[yellow]{status}[/]"
+    return f"[red]{status}[/]"
+
+
+def owned_text(state: GameState, column: int, row: int) -> str:
+    if column == 0:
+        return str(state.units[tuple(UnitType)[row]])
+    if column == 1:
+        return str(state.buildings[tuple(BuildingType)[row]])
+    return ""
 
 
 def action_index(column: int, row: int) -> int:
@@ -323,72 +488,6 @@ def format_cooldown(seconds: float) -> str:
     return f"{minutes}:{seconds:02d}"
 
 
-def format_cell_suffix(state: GameState, menu_action: MenuAction, count: int | None) -> str:
-    if menu_action.cooldown_key is not None:
-        remaining = state.action_cooldowns.get(menu_action.cooldown_key, 0.0)
-        return format_cooldown(remaining)
-    if count is None:
-        return ""
-    return f"{count or 0:>3}"
-
-
-def format_selectable_cell(
-    state: GameState,
-    menu_action: MenuAction,
-    index: int,
-    selected_index: int,
-    count: int | None,
-) -> str:
-    selected = index == selected_index
-    affordable = is_action_affordable(state, menu_action)
-    marker = ">" if selected else " "
-    color = "green" if affordable else "red"
-    style = f"reverse {color}" if selected else color
-    suffix = format_cell_suffix(state, menu_action, count)
-    line = f"{marker} {menu_action.label:<12} {suffix:>5}"
-    return f"[{style}]{line:<24}[/]"
-
-
-def format_overview(state: GameState, selected_action_index: int) -> list[str]:
-    headers = ("Creatures", "Buildings", "Actions")
-    rows = [
-        (UNIT_ACTIONS[0], state.units[UnitType.WORKER]),
-        (UNIT_ACTIONS[1], state.units[UnitType.SOLDIER]),
-        (UNIT_ACTIONS[2], state.units[UnitType.LUMBERJACK]),
-        (UNIT_ACTIONS[3], state.units[UnitType.CAPTAIN]),
-        (UNIT_ACTIONS[4], state.units[UnitType.SORCERER]),
-    ]
-    building_rows = [
-        (BUILDING_ACTIONS[0], state.buildings[BuildingType.FARM]),
-        (BUILDING_ACTIONS[1], state.buildings[BuildingType.MINE]),
-        (BUILDING_ACTIONS[2], state.buildings[BuildingType.QUARRY]),
-        (BUILDING_ACTIONS[3], state.buildings[BuildingType.ARCANE_TOWER]),
-        (BUILDING_ACTIONS[4], state.buildings[BuildingType.CATAPULT]),
-    ]
-    action_rows = [(action, None) for action in ONE_TIME_ACTIONS]
-    column_rows = (rows, building_rows, action_rows)
-
-    lines = [f"{headers[0]:<27}{headers[1]:<27}{headers[2]}"]
-    for row in range(max(len(column) for column in column_rows)):
-        cells = []
-        for column, entries in enumerate(column_rows):
-            if row >= len(entries):
-                cells.append(" " * 24)
-                continue
-            menu_action, count = entries[row]
-            cells.append(
-                format_selectable_cell(
-                    state,
-                    menu_action,
-                    action_index(column, row),
-                    selected_action_index,
-                    count,
-                )
-            )
-        lines.append("   ".join(cells))
-    return lines
-
-
 def render_state(state: GameState, selected_action_index: int = 0) -> str:
     if state.is_dead:
         return render_game_over(state)
@@ -401,39 +500,96 @@ def render_state(state: GameState, selected_action_index: int = 0) -> str:
 
     menu_action = selected_action(selected_action_index)
     readiness = action_status_label(state, menu_action)
+    unit_lines = [
+        f"{action.label:<16} {state.units[unit_type]}"
+        for action, unit_type in zip(UNIT_ACTIONS, UnitType, strict=True)
+    ]
+    building_lines = [
+        f"{action.label:<16} {state.buildings[building_type]}"
+        for action, building_type in zip(BUILDING_ACTIONS, BuildingType, strict=True)
+    ]
+    shop_lines = format_shop_columns(state, selected_action_index)
 
     return "\n".join(
         [
-            render_panel(
-                "Rise of the Shellcromancer",
-                ["Gather, build, patrol, and keep the stores from running dry."],
-            ),
+            "Rise of the Shellcromancer",
             "",
-            render_panel("Resources", resource_lines),
+            "Resources Tab",
+            *resource_lines,
             "",
-            render_panel("Overview", format_overview(state, selected_action_index)),
+            "Units",
+            *unit_lines,
             "",
-            render_panel(
-                "Selected",
-                [
-                    f"{menu_action.label}: {readiness}",
-                    f"Cost: {menu_action.cost}",
-                ],
-            ),
+            "Buildings",
+            *building_lines,
             "",
-            render_panel(
-                "Keybindings",
-                [
-                    "up/down or k/j     Select row",
-                    "left/right or h/l  Select column",
-                    "enter              Use selected unit/building/action",
-                    "q                  Quit",
-                ],
-            ),
+            "Shop Tab",
+            *shop_lines,
             "",
-            render_panel("Status", [f"Last action: {state.last_action_message}"]),
+            "Selected",
+            f"{menu_action.label}: {readiness}",
+            f"Cost: {menu_action.cost}",
+            "",
+            f"Last action: {state.last_action_message}",
         ]
     )
+
+
+def format_shop_columns(state: GameState, selected_action_index: int) -> list[str]:
+    rows = [SHOP_COLUMN_LABELS]
+    max_rows = max(len(column) for column in MENU_COLUMNS)
+    selected_column, selected_row = selected_position(selected_action_index)
+    for row in range(max_rows):
+        cells = []
+        for column, menu_actions in enumerate(MENU_COLUMNS):
+            if row >= len(menu_actions):
+                cells.append("")
+                continue
+
+            menu_action = menu_actions[row]
+            status = action_status_label(state, menu_action)
+            owned = owned_text(state, column, row)
+            marker = ">" if column == selected_column and row == selected_row else " "
+            cells.append(f"{marker} {menu_action.label:<14} {owned:<5} {status}")
+        rows.append(tuple(cells))
+
+    return [
+        f"{unit:<34} {building:<40} {action}"
+        for unit, building, action in rows
+    ]
+
+
+def format_shop_text(state: GameState, selected_action_index: int) -> Text:
+    selected_column, selected_row = selected_position(selected_action_index)
+    widths = (34, 40, 40)
+    text = Text()
+
+    for label, width in zip(SHOP_COLUMN_LABELS, widths, strict=True):
+        text.append(label.ljust(width), style="bold")
+    text.append("\n")
+
+    max_rows = max(len(column) for column in MENU_COLUMNS)
+    for row in range(max_rows):
+        for column, menu_actions in enumerate(MENU_COLUMNS):
+            width = widths[column]
+            if row >= len(menu_actions):
+                text.append(" " * width)
+                continue
+
+            menu_action = menu_actions[row]
+            marker = ">" if column == selected_column and row == selected_row else " "
+            status = action_status_text(state, menu_action)
+            cell = (
+                f"{marker} {menu_action.label:<14} "
+                f"{owned_text(state, column, row):<5} {status}"
+            )
+            style = action_status_style(state, menu_action)
+            if column == selected_column and row == selected_row:
+                style = f"reverse {style}"
+            text.append(cell[:width].ljust(width), style=style)
+        text.append("\n")
+
+    return text
 
 
 def render_game_over(state: GameState) -> str:
@@ -445,55 +601,18 @@ def render_game_over(state: GameState) -> str:
 
     return "\n".join(
         [
-            render_panel(
-                "Rise of the Shellcromancer",
-                ["Game Over", "Food reached 0. The run has ended."],
-            ),
+            "Rise of the Shellcromancer",
+            "Game Over",
+            "Food reached 0. The run has ended.",
             "",
-            render_panel("Final Stores", resource_lines),
+            "Final Stores",
+            *resource_lines,
             "",
-            render_panel("Status", [state.last_action_message]),
+            state.last_action_message,
             "",
-            render_panel(
-                "Keybindings",
-                [
-                    "r                  Start a new run",
-                    "q                  Quit",
-                ],
-            ),
+            "Press r to start a new run. Press q to quit.",
         ]
     )
-
-
-def render_panel(title: str, lines: list[str], width: int = PANEL_WIDTH) -> str:
-    content_width = width - 4
-    top = render_panel_top(title, width)
-    border = "+" + "-" * (width - 2) + "+"
-    body = []
-
-    for line in lines or [""]:
-        for row in panel_rows(line, content_width):
-            body.append(f"| {row:<{content_width}} |")
-
-    return "\n".join([top, *body, border])
-
-
-def render_panel_top(title: str, width: int) -> str:
-    title_text = f" {title} "
-    border_width = width - 2
-    if len(title_text) >= border_width:
-        return "+" + "-" * border_width + "+"
-    return "+" + title_text + "-" * (border_width - len(title_text)) + "+"
-
-
-def panel_rows(line: str, width: int) -> list[str]:
-    if len(line) <= width:
-        return [line]
-
-    if "[" in line and "]" in line:
-        return [line]
-
-    return wrap(line, width=width) or [""]
 
 
 def main() -> None:
