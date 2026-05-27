@@ -1,0 +1,156 @@
+import json
+import os
+from pathlib import Path
+from typing import TypeVar
+
+from shellcromancer.buildings import BuildingType
+from shellcromancer.game_state import GameState
+from shellcromancer.resources import ResourceType
+from shellcromancer.units import UnitType
+
+
+SAVE_VERSION = 1
+SAVE_LOAD_FAILURE_MESSAGE = "Save file could not be loaded; started a new run."
+
+EnumKey = TypeVar("EnumKey", ResourceType, UnitType, BuildingType)
+
+
+def default_save_path() -> Path:
+    data_home = os.environ.get("XDG_DATA_HOME")
+    base_path = Path(data_home) if data_home else Path.home() / ".local" / "share"
+    return base_path / "shellcromancer" / "save.json"
+
+
+def state_to_dict(state: GameState) -> dict[str, object]:
+    return {
+        "version": SAVE_VERSION,
+        "resources": {
+            resource.value: amount for resource, amount in state.resources.items()
+        },
+        "units": {unit.value: count for unit, count in state.units.items()},
+        "buildings": {
+            building.value: count for building, count in state.buildings.items()
+        },
+        "action_cooldowns": dict(state.action_cooldowns),
+        "last_delta": {
+            resource.value: amount for resource, amount in state.last_delta.items()
+        },
+        "last_action_message": state.last_action_message,
+        "shell_fairy_bonus": state.shell_fairy_bonus,
+        "is_dead": state.is_dead,
+    }
+
+
+def state_from_dict(data: dict[str, object]) -> GameState:
+    if not isinstance(data, dict):
+        raise ValueError("Save data must be a JSON object.")
+
+    default_state = GameState()
+    state = GameState(
+        resources=_enum_float_mapping(
+            data.get("resources"), ResourceType, default_state.resources
+        ),
+        units=_enum_int_mapping(data.get("units"), UnitType, default_state.units),
+        buildings=_enum_int_mapping(
+            data.get("buildings"), BuildingType, default_state.buildings
+        ),
+        action_cooldowns=_string_float_mapping(
+            data.get("action_cooldowns"), default_state.action_cooldowns
+        ),
+        last_delta=_enum_float_mapping(
+            data.get("last_delta"), ResourceType, default_state.last_delta
+        ),
+    )
+
+    last_action_message = data.get("last_action_message")
+    if isinstance(last_action_message, str):
+        state.last_action_message = last_action_message
+
+    state.shell_fairy_bonus = _float_or_default(
+        data.get("shell_fairy_bonus"), default_state.shell_fairy_bonus
+    )
+    is_dead = data.get("is_dead", default_state.is_dead)
+    state.is_dead = is_dead if isinstance(is_dead, bool) else default_state.is_dead
+    return state
+
+
+def load_state(path: Path | None = None) -> GameState:
+    save_path = path or default_save_path()
+    if not save_path.exists():
+        return GameState()
+
+    try:
+        data = json.loads(save_path.read_text(encoding="utf-8"))
+        return state_from_dict(data)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        state = GameState()
+        state.last_action_message = SAVE_LOAD_FAILURE_MESSAGE
+        return state
+
+
+def save_state(state: GameState, path: Path | None = None) -> None:
+    save_path = path or default_save_path()
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = save_path.with_suffix(f"{save_path.suffix}.tmp")
+    temporary_path.write_text(
+        json.dumps(state_to_dict(state), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    temporary_path.replace(save_path)
+
+
+def _enum_float_mapping(
+    raw_value: object, enum_type: type[EnumKey], defaults: dict[EnumKey, float]
+) -> dict[EnumKey, float]:
+    values = defaults.copy()
+    if not isinstance(raw_value, dict):
+        return values
+
+    for key in enum_type:
+        if key.value in raw_value:
+            values[key] = _float_or_default(raw_value[key.value], values[key])
+    return values
+
+
+def _enum_int_mapping(
+    raw_value: object, enum_type: type[EnumKey], defaults: dict[EnumKey, int]
+) -> dict[EnumKey, int]:
+    values = defaults.copy()
+    if not isinstance(raw_value, dict):
+        return values
+
+    for key in enum_type:
+        if key.value in raw_value:
+            values[key] = _int_or_default(raw_value[key.value], values[key])
+    return values
+
+
+def _string_float_mapping(
+    raw_value: object, defaults: dict[str, float]
+) -> dict[str, float]:
+    values = defaults.copy()
+    if not isinstance(raw_value, dict):
+        return values
+
+    for key, value in raw_value.items():
+        if isinstance(key, str):
+            values[key] = _float_or_default(value, values.get(key, 0.0))
+    return values
+
+
+def _float_or_default(value: object, default: float) -> float:
+    if isinstance(value, bool):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _int_or_default(value: object, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default

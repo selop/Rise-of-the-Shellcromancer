@@ -1,0 +1,88 @@
+import json
+
+import pytest
+
+from shellcromancer.actions import HUNT_ACTION_KEY
+from shellcromancer.buildings import BuildingType
+from shellcromancer.game_state import GameState
+from shellcromancer.persistence import (
+    SAVE_LOAD_FAILURE_MESSAGE,
+    default_save_path,
+    load_state,
+    save_state,
+    state_from_dict,
+)
+from shellcromancer.resources import ResourceType
+from shellcromancer.units import UnitType
+
+
+def test_save_and_load_state_round_trip(tmp_path) -> None:
+    save_path = tmp_path / "save.json"
+    state = GameState()
+    state.resources[ResourceType.FOOD] = 4.5
+    state.units[UnitType.SOLDIER] = 2
+    state.buildings[BuildingType.FARM] = 3
+    state.action_cooldowns[HUNT_ACTION_KEY] = 12.0
+    state.last_delta[ResourceType.FOOD] = -0.4
+    state.last_action_message = "Stored state."
+    state.shell_fairy_bonus = 0.3
+    state.is_dead = True
+
+    save_state(state, save_path)
+    loaded = load_state(save_path)
+
+    assert loaded.resources[ResourceType.FOOD] == pytest.approx(4.5)
+    assert loaded.units[UnitType.SOLDIER] == 2
+    assert loaded.buildings[BuildingType.FARM] == 3
+    assert loaded.action_cooldowns[HUNT_ACTION_KEY] == pytest.approx(12.0)
+    assert loaded.last_delta[ResourceType.FOOD] == pytest.approx(-0.4)
+    assert loaded.last_action_message == "Stored state."
+    assert loaded.shell_fairy_bonus == pytest.approx(0.3)
+    assert loaded.is_dead is True
+
+
+def test_load_missing_save_returns_fresh_state(tmp_path) -> None:
+    loaded = load_state(tmp_path / "missing.json")
+
+    assert loaded.resources[ResourceType.FOOD] == pytest.approx(10.0)
+    assert loaded.is_dead is False
+
+
+def test_load_corrupt_save_falls_back_to_fresh_state(tmp_path) -> None:
+    save_path = tmp_path / "save.json"
+    save_path.write_text("{not json", encoding="utf-8")
+
+    loaded = load_state(save_path)
+
+    assert loaded.resources[ResourceType.FOOD] == pytest.approx(10.0)
+    assert loaded.last_action_message == SAVE_LOAD_FAILURE_MESSAGE
+    assert loaded.is_dead is False
+
+
+def test_state_from_dict_fills_missing_fields_with_defaults() -> None:
+    state = state_from_dict({"resources": {"food": 2.0}, "units": {"worker": 1}})
+
+    assert state.resources[ResourceType.FOOD] == pytest.approx(2.0)
+    assert state.resources[ResourceType.WOOD] == pytest.approx(10.0)
+    assert state.units[UnitType.WORKER] == 1
+    assert state.units[UnitType.SOLDIER] == 0
+    assert state.action_cooldowns[HUNT_ACTION_KEY] == pytest.approx(0.0)
+
+
+def test_default_save_path_respects_xdg_data_home(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+
+    assert default_save_path() == tmp_path / "shellcromancer" / "save.json"
+
+
+def test_save_file_uses_enum_values_as_keys(tmp_path) -> None:
+    save_path = tmp_path / "save.json"
+
+    save_state(GameState(), save_path)
+    data = json.loads(save_path.read_text(encoding="utf-8"))
+
+    assert "food" in data["resources"]
+    assert "worker" in data["units"]
+    assert "farm" in data["buildings"]

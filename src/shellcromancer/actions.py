@@ -1,0 +1,399 @@
+from dataclasses import dataclass
+from random import randint, random
+
+from shellcromancer.buildings import BuildingType
+from shellcromancer.game_state import GameState
+from shellcromancer.resources import ResourceType
+from shellcromancer.units import UnitType
+
+HUNT_ACTION_KEY = "hunt"
+HUNT_COOLDOWN_SECONDS = 60.0
+PATROL_ACTION_KEY = "patrol"
+PATROL_COOLDOWN_SECONDS = 120.0
+PATROL_SHELL_FAIRY_BONUS = 0.1
+KINDLE_PYRE_ACTION_KEY = "kindle_the_pyre"
+KINDLE_PYRE_COOLDOWN_SECONDS = 600.0
+
+
+@dataclass(frozen=True)
+class ActionResult:
+    success: bool
+    message: str
+
+
+def _resource_name(resource: ResourceType) -> str:
+    return resource.value
+
+
+def _can_afford(
+    state: GameState, costs: dict[ResourceType, float]
+) -> tuple[bool, ResourceType | None]:
+    for resource, amount in costs.items():
+        if state.resources[resource] < amount:
+            return False, resource
+    return True, None
+
+
+def _spend(state: GameState, costs: dict[ResourceType, float]) -> None:
+    for resource, amount in costs.items():
+        state.resources[resource] -= amount
+
+
+def _finish(state: GameState, success: bool, message: str) -> ActionResult:
+    state.last_action_message = message
+    return ActionResult(success=success, message=message)
+
+
+def create_worker(state: GameState) -> ActionResult:
+    costs = {ResourceType.SHELL: 10.0}
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(state, False, f"Not enough {_resource_name(missing)} to create worker.")
+
+    _spend(state, costs)
+    state.units[UnitType.WORKER] += 1
+    return _finish(state, True, "Created worker.")
+
+
+def _build_structure(
+    state: GameState, building_type: BuildingType, singular_name: str
+) -> ActionResult:
+    if state.units[UnitType.WORKER] < 1:
+        return _finish(
+            state, False, f"Need at least 1 worker to build a {singular_name}."
+        )
+
+    costs = {
+        ResourceType.WOOD: 10.0,
+        ResourceType.STONE: 10.0,
+        ResourceType.IRON: 2.0,
+    }
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(
+            state, False, f"Not enough {_resource_name(missing)} to build a {singular_name}."
+        )
+
+    _spend(state, costs)
+    state.units[UnitType.WORKER] -= 1
+    state.buildings[building_type] += 1
+    return _finish(state, True, f"Built {singular_name}.")
+
+
+def build_farm(state: GameState) -> ActionResult:
+    return _build_structure(state, BuildingType.FARM, "farm")
+
+
+def build_mine(state: GameState) -> ActionResult:
+    return _build_structure(state, BuildingType.MINE, "mine")
+
+
+def build_quarry(state: GameState) -> ActionResult:
+    return _build_structure(state, BuildingType.QUARRY, "quarry")
+
+
+def upgrade_worker_to_soldier(state: GameState) -> ActionResult:
+    if state.units[UnitType.WORKER] < 1:
+        return _finish(state, False, "Need at least 1 worker to upgrade soldier.")
+
+    costs = {
+        ResourceType.IRON: 5.0,
+        ResourceType.SHELL: 5.0,
+    }
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(state, False, f"Not enough {_resource_name(missing)} to upgrade soldier.")
+
+    _spend(state, costs)
+    state.units[UnitType.WORKER] -= 1
+    state.units[UnitType.SOLDIER] += 1
+    return _finish(state, True, "Upgraded worker to soldier.")
+
+
+def upgrade_soldier_to_sorcerer(state: GameState) -> ActionResult:
+    if state.units[UnitType.SOLDIER] < 1:
+        return _finish(state, False, "Need at least 1 soldier to create sorcerer.")
+
+    costs = {ResourceType.SHELL: 50.0}
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(state, False, f"Not enough {_resource_name(missing)} to create sorcerer.")
+
+    _spend(state, costs)
+    state.units[UnitType.SOLDIER] -= 1
+    state.units[UnitType.SORCERER] += 1
+    return _finish(state, True, "Created sorcerer from soldier.")
+
+
+def upgrade_worker_to_lumberjack(state: GameState) -> ActionResult:
+    if state.units[UnitType.WORKER] < 1:
+        return _finish(state, False, "Need at least 1 worker to upgrade lumberjack.")
+
+    costs = {
+        ResourceType.WOOD: 5.0,
+        ResourceType.SHELL: 2.0,
+    }
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(state, False, f"Not enough {_resource_name(missing)} to upgrade lumberjack.")
+
+    _spend(state, costs)
+    state.units[UnitType.WORKER] -= 1
+    state.units[UnitType.LUMBERJACK] += 1
+    return _finish(state, True, "Upgraded worker to lumberjack.")
+
+
+def promote_worker_to_captain(state: GameState) -> ActionResult:
+    if state.units[UnitType.WORKER] < 1:
+        return _finish(state, False, "Need at least 1 worker to promote captain.")
+
+    costs = {ResourceType.GOLD: 10.0}
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(state, False, f"Not enough {_resource_name(missing)} to promote captain.")
+
+    _spend(state, costs)
+    state.units[UnitType.WORKER] -= 1
+    state.units[UnitType.CAPTAIN] += 1
+    return _finish(
+        state,
+        True,
+        "Promoted a worker to captain. Patrols will now depart whenever they are ready.",
+    )
+
+
+def build_arcane_tower(state: GameState) -> ActionResult:
+    if state.units[UnitType.SORCERER] < 1:
+        return _finish(
+            state, False, "Need at least 1 sorcerer to build an arcane tower."
+        )
+
+    costs = {ResourceType.STONE: 250.0}
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(
+            state,
+            False,
+            f"Not enough {_resource_name(missing)} to build an arcane tower.",
+        )
+
+    _spend(state, costs)
+    state.units[UnitType.SORCERER] -= 1
+    state.buildings[BuildingType.ARCANE_TOWER] += 1
+    return _finish(state, True, "Built arcane tower.")
+
+
+def build_catapult(state: GameState) -> ActionResult:
+    costs = {
+        ResourceType.GOLD: 5.0,
+        ResourceType.WOOD: 100.0,
+        ResourceType.STONE: 200.0,
+    }
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(
+            state, False, f"Not enough {_resource_name(missing)} to build a catapult."
+        )
+
+    _spend(state, costs)
+    state.buildings[BuildingType.CATAPULT] += 1
+    return _finish(state, True, "Built catapult.")
+
+
+def hunt(state: GameState, roll: float | None = None) -> ActionResult:
+    cooldown = state.action_cooldowns.get(HUNT_ACTION_KEY, 0.0)
+    if cooldown > 0:
+        return _finish(state, False, f"Hunt is on cooldown for {cooldown:.0f} seconds.")
+
+    if state.units[UnitType.SOLDIER] < 1:
+        return _finish(state, False, "Need at least 1 soldier to hunt.")
+
+    outcome_roll = random() if roll is None else roll
+    state.action_cooldowns[HUNT_ACTION_KEY] = HUNT_COOLDOWN_SECONDS
+
+    if outcome_roll < 0.15:
+        state.units[UnitType.SOLDIER] -= 1
+        return _finish(
+            state,
+            True,
+            "Hunt result: The soldier did not return from the wilds. No resources were recovered.",
+        )
+
+    if outcome_roll < 0.80:
+        state.resources[ResourceType.FOOD] += 5.0
+        return _finish(
+            state,
+            True,
+            "Hunt result: The soldier returned with fresh game, adding 5 food to the stores.",
+        )
+
+    state.resources[ResourceType.FOOD] += 5.0
+    state.resources[ResourceType.SHELL] += 5.0
+    return _finish(
+        state,
+        True,
+        "Hunt result: The soldier found game beside a buried shell cache, gaining 5 food and 5 shell.",
+    )
+
+
+def patrol(
+    state: GameState,
+    roll: float | None = None,
+    gold_reward: int | None = None,
+    food_reward: int | None = None,
+    iron_reward: int | None = None,
+) -> ActionResult:
+    cooldown = state.action_cooldowns.get(PATROL_ACTION_KEY, 0.0)
+    if cooldown > 0:
+        return _finish(
+            state, False, f"Patrol is on cooldown for {cooldown:.0f} seconds."
+        )
+
+    if state.units[UnitType.SOLDIER] < 3:
+        return _finish(state, False, "Need at least 3 soldiers to patrol.")
+
+    costs = {ResourceType.FOOD: 10.0}
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(state, False, f"Not enough {_resource_name(missing)} to patrol.")
+
+    _spend(state, costs)
+    outcome_roll = random() if roll is None else roll
+    state.action_cooldowns[PATROL_ACTION_KEY] = PATROL_COOLDOWN_SECONDS
+
+    if outcome_roll < 0.05:
+        state.units[UnitType.SOLDIER] -= 3
+        return _finish(
+            state,
+            True,
+            "Patrol result: The patrol was wiped out before anyone could return.",
+        )
+
+    if outcome_roll < 0.10:
+        state.units[UnitType.SOLDIER] -= 2
+        return _finish(
+            state,
+            True,
+            "Patrol result: The patrol was ambushed. 2 soldiers died before the survivors escaped.",
+        )
+
+    if outcome_roll < 0.20:
+        state.units[UnitType.SOLDIER] -= 1
+        return _finish(
+            state,
+            True,
+            "Patrol result: The patrol fought through danger. 1 soldier died on the road.",
+        )
+
+    if outcome_roll < 0.40:
+        return _finish(
+            state,
+            True,
+            "Patrol result: The roads were quiet. The soldiers returned safely but found nothing useful.",
+        )
+
+    if outcome_roll < 0.50:
+        reward = randint(1, 10) if gold_reward is None else gold_reward
+        state.resources[ResourceType.GOLD] += reward
+        return _finish(
+            state,
+            True,
+            "Patrol result: The soldiers raided a bandit hideout "
+            f"and carried back {reward} gold.",
+        )
+
+    if outcome_roll < 0.60:
+        state.shell_fairy_bonus += PATROL_SHELL_FAIRY_BONUS
+        return _finish(
+            state,
+            True,
+            "Patrol result: Caught a shell fairy. "
+            "Its glow now strengthens shell income by +0.1/s.",
+        )
+
+    if outcome_roll < 0.80:
+        state.units[UnitType.WORKER] += 1
+        return _finish(
+            state,
+            True,
+            "Patrol result: The soldiers saved a stranded worker from a wolf attack. Worker +1.",
+        )
+
+    food = randint(1, 10) if food_reward is None else food_reward
+    iron = randint(1, 10) if iron_reward is None else iron_reward
+    state.resources[ResourceType.FOOD] += food
+    state.resources[ResourceType.IRON] += iron
+    return _finish(
+        state,
+        True,
+        "Patrol result: Found an abandoned merchant cart. "
+        f"The soldiers recovered {food} food and {iron} iron.",
+    )
+
+
+def kindle_the_pyre(
+    state: GameState,
+    roll: float | None = None,
+    shell_reward: int | None = None,
+    gold_reward: int | None = None,
+) -> ActionResult:
+    cooldown = state.action_cooldowns.get(KINDLE_PYRE_ACTION_KEY, 0.0)
+    if cooldown > 0:
+        return _finish(
+            state,
+            False,
+            f"Kindle the Pyre is on cooldown for {cooldown:.0f} seconds.",
+        )
+
+    if state.units[UnitType.SORCERER] < 1:
+        return _finish(state, False, "Need at least 1 sorcerer to kindle the pyre.")
+
+    costs = {ResourceType.WOOD: 100.0}
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(
+            state,
+            False,
+            f"Not enough {_resource_name(missing)} to kindle the pyre.",
+        )
+
+    _spend(state, costs)
+    outcome_roll = random() if roll is None else roll
+    state.action_cooldowns[KINDLE_PYRE_ACTION_KEY] = KINDLE_PYRE_COOLDOWN_SECONDS
+
+    if outcome_roll < 0.20:
+        return _finish(
+            state,
+            True,
+            "Kindle the Pyre result: The flames guttered out, leaving only ash behind.",
+        )
+
+    if outcome_roll < 0.60:
+        reward = randint(10, 50) if shell_reward is None else shell_reward
+        state.resources[ResourceType.SHELL] += reward
+        return _finish(
+            state,
+            True,
+            "Kindle the Pyre result: Shell fragments cracked open in the heat, "
+            f"yielding {reward} shell.",
+        )
+
+    reward = randint(5, 10) if gold_reward is None else gold_reward
+    state.resources[ResourceType.GOLD] += reward
+    return _finish(
+        state,
+        True,
+        "Kindle the Pyre result: A bright ember hardened into treasure, "
+        f"yielding {reward} gold.",
+    )
+
+
+def defend(state: GameState) -> ActionResult:
+    if state.buildings[BuildingType.CATAPULT] < 1:
+        return _finish(state, False, "Need at least 1 catapult to defend.")
+
+    return _finish(
+        state,
+        True,
+        "Defend is ready. Its battle effect is not implemented yet.",
+    )
