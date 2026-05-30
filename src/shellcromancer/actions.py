@@ -4,6 +4,7 @@ from random import randint, random
 from shellcromancer.buildings import BuildingType
 from shellcromancer.game_state import GameState
 from shellcromancer.resources import ResourceType
+from shellcromancer.threats import active_threat_name
 from shellcromancer.units import UnitType
 
 HUNT_ACTION_KEY = "hunt"
@@ -11,6 +12,9 @@ HUNT_COOLDOWN_SECONDS = 60.0
 PATROL_ACTION_KEY = "patrol"
 PATROL_COOLDOWN_SECONDS = 120.0
 PATROL_SHELL_FAIRY_BONUS = 0.1
+EXPEDITION_ACTION_KEY = "expedition"
+EXPEDITION_COOLDOWN_SECONDS = 300.0
+EXPEDITION_SHELL_FAIRY_BONUS = 0.2
 KINDLE_PYRE_ACTION_KEY = "kindle_the_pyre"
 KINDLE_PYRE_COOLDOWN_SECONDS = 600.0
 
@@ -331,6 +335,136 @@ def patrol(
     )
 
 
+def expedition(
+    state: GameState,
+    roll: float | None = None,
+    iron_reward: int | None = None,
+    gold_reward: int | None = None,
+    food_reward: int | None = None,
+    wood_reward: int | None = None,
+    shell_reward: int | None = None,
+    stone_reward: int | None = None,
+) -> ActionResult:
+    cooldown = state.action_cooldowns.get(EXPEDITION_ACTION_KEY, 0.0)
+    if cooldown > 0:
+        return _finish(
+            state, False, f"Expedition is on cooldown for {cooldown:.0f} seconds."
+        )
+
+    if state.units[UnitType.CAPTAIN] < 1:
+        return _finish(
+            state, False, "Need at least 1 captain to launch an expedition."
+        )
+
+    if state.units[UnitType.SOLDIER] < 10:
+        return _finish(
+            state, False, "Need at least 10 soldiers to launch an expedition."
+        )
+
+    costs = {ResourceType.FOOD: 25.0, ResourceType.GOLD: 5.0}
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(
+            state,
+            False,
+            f"Not enough {_resource_name(missing)} to launch an expedition.",
+        )
+
+    _spend(state, costs)
+    outcome_roll = random() if roll is None else roll
+    state.action_cooldowns[EXPEDITION_ACTION_KEY] = EXPEDITION_COOLDOWN_SECONDS
+
+    if outcome_roll < 0.05:
+        state.units[UnitType.SOLDIER] -= 6
+        return _finish(
+            state,
+            True,
+            "Expedition result: The column vanished into a dead kingdom. "
+            "6 soldiers returned only as names carved into shell.",
+        )
+
+    if outcome_roll < 0.12:
+        state.units[UnitType.SOLDIER] -= 3
+        iron = randint(10, 20) if iron_reward is None else iron_reward
+        gold = randint(5, 12) if gold_reward is None else gold_reward
+        state.resources[ResourceType.IRON] += iron
+        state.resources[ResourceType.GOLD] += gold
+        return _finish(
+            state,
+            True,
+            "Expedition result: The survivors dragged home a battered cache, "
+            f"losing 3 soldiers but recovering {iron} iron and {gold} gold.",
+        )
+
+    if outcome_roll < 0.25:
+        iron = randint(15, 30) if iron_reward is None else iron_reward
+        gold = randint(10, 25) if gold_reward is None else gold_reward
+        state.resources[ResourceType.IRON] += iron
+        state.resources[ResourceType.GOLD] += gold
+        return _finish(
+            state,
+            True,
+            "Expedition result: An ancient armory opened under the captain's "
+            f"seal, yielding {iron} iron and {gold} gold.",
+        )
+
+    if outcome_roll < 0.40:
+        food = randint(40, 80) if food_reward is None else food_reward
+        wood = randint(20, 50) if wood_reward is None else wood_reward
+        state.resources[ResourceType.FOOD] += food
+        state.resources[ResourceType.WOOD] += wood
+        return _finish(
+            state,
+            True,
+            "Expedition result: A forgotten granary was found above old roots, "
+            f"adding {food} food and {wood} wood.",
+        )
+
+    if outcome_roll < 0.55:
+        shell = randint(25, 60) if shell_reward is None else shell_reward
+        state.resources[ResourceType.SHELL] += shell
+        state.shell_fairy_bonus += EXPEDITION_SHELL_FAIRY_BONUS
+        return _finish(
+            state,
+            True,
+            "Expedition result: The soldiers mapped a shell shrine, "
+            f"gaining {shell} shell and +0.2/s shell income.",
+        )
+
+    if outcome_roll < 0.70:
+        state.units[UnitType.WORKER] += 2
+        return _finish(
+            state,
+            True,
+            "Expedition result: The captain liberated a hidden settlement. "
+            "Worker +2.",
+        )
+
+    if outcome_roll < 0.85:
+        stone = randint(20, 50) if stone_reward is None else stone_reward
+        iron = randint(20, 50) if iron_reward is None else iron_reward
+        gold = randint(10, 25) if gold_reward is None else gold_reward
+        state.resources[ResourceType.STONE] += stone
+        state.resources[ResourceType.IRON] += iron
+        state.resources[ResourceType.GOLD] += gold
+        return _finish(
+            state,
+            True,
+            "Expedition result: Battlefield salvage filled the wagons with "
+            f"{stone} stone, {iron} iron, and {gold} gold.",
+        )
+
+    shell = randint(50, 100) if shell_reward is None else shell_reward
+    state.units[UnitType.CAPTAIN] += 1
+    state.resources[ResourceType.SHELL] += shell
+    return _finish(
+        state,
+        True,
+        "Expedition result: A rival warband bent the knee. "
+        f"Captain +1 and {shell} shell.",
+    )
+
+
 def kindle_the_pyre(
     state: GameState,
     roll: float | None = None,
@@ -397,8 +531,13 @@ def defend(state: GameState) -> ActionResult:
     if state.buildings[BuildingType.CATAPULT] < 1:
         return _finish(state, False, "Need at least 1 catapult to defend.")
 
+    if not state.active_threats:
+        return _finish(state, False, "No active threats to defend against.")
+
+    stopped_threat = state.active_threats.pop(0)
+    threat_name = active_threat_name(stopped_threat)
     return _finish(
         state,
         True,
-        "Defend is ready. Its battle effect is not implemented yet.",
+        f"Defended against {threat_name}. The threat has been stopped.",
     )

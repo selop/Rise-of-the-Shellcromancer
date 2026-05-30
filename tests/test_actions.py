@@ -1,4 +1,6 @@
 from shellcromancer.actions import (
+    EXPEDITION_ACTION_KEY,
+    EXPEDITION_COOLDOWN_SECONDS,
     HUNT_ACTION_KEY,
     HUNT_COOLDOWN_SECONDS,
     KINDLE_PYRE_ACTION_KEY,
@@ -12,6 +14,7 @@ from shellcromancer.actions import (
     build_quarry,
     create_worker,
     defend,
+    expedition,
     hunt,
     kindle_the_pyre,
     patrol,
@@ -23,12 +26,22 @@ from shellcromancer.actions import (
 from shellcromancer.buildings import BuildingType
 from shellcromancer.game_state import GameState
 from shellcromancer.resources import ResourceType
+from shellcromancer.threats import ActiveThreat
 from shellcromancer.units import UnitType
 
 
 def patrol_ready_state() -> GameState:
     state = GameState()
     state.units[UnitType.SOLDIER] = 3
+    return state
+
+
+def expedition_ready_state() -> GameState:
+    state = GameState()
+    state.units[UnitType.CAPTAIN] = 1
+    state.units[UnitType.SOLDIER] = 10
+    state.resources[ResourceType.FOOD] = 25.0
+    state.resources[ResourceType.GOLD] = 5.0
     return state
 
 
@@ -473,6 +486,172 @@ def test_patrol_cannot_run_while_on_cooldown() -> None:
     assert state.resources[ResourceType.FOOD] == 10.0
 
 
+def test_expedition_requires_captain() -> None:
+    state = expedition_ready_state()
+    state.units[UnitType.CAPTAIN] = 0
+
+    result = expedition(state, roll=0.3)
+
+    assert result.success is False
+    assert result.message == "Need at least 1 captain to launch an expedition."
+    assert state.action_cooldowns[EXPEDITION_ACTION_KEY] == 0.0
+
+
+def test_expedition_requires_ten_soldiers() -> None:
+    state = expedition_ready_state()
+    state.units[UnitType.SOLDIER] = 9
+
+    result = expedition(state, roll=0.3)
+
+    assert result.success is False
+    assert result.message == "Need at least 10 soldiers to launch an expedition."
+    assert state.action_cooldowns[EXPEDITION_ACTION_KEY] == 0.0
+
+
+def test_expedition_requires_food() -> None:
+    state = expedition_ready_state()
+    state.resources[ResourceType.FOOD] = 24.9
+
+    result = expedition(state, roll=0.3)
+
+    assert result.success is False
+    assert result.message == "Not enough food to launch an expedition."
+    assert state.action_cooldowns[EXPEDITION_ACTION_KEY] == 0.0
+
+
+def test_expedition_requires_gold() -> None:
+    state = expedition_ready_state()
+    state.resources[ResourceType.GOLD] = 4.9
+
+    result = expedition(state, roll=0.3)
+
+    assert result.success is False
+    assert result.message == "Not enough gold to launch an expedition."
+    assert state.action_cooldowns[EXPEDITION_ACTION_KEY] == 0.0
+
+
+def test_expedition_disaster_loses_soldiers_and_starts_cooldown() -> None:
+    state = expedition_ready_state()
+
+    result = expedition(state, roll=0.04)
+
+    assert result.success is True
+    assert state.units[UnitType.CAPTAIN] == 1
+    assert state.units[UnitType.SOLDIER] == 4
+    assert state.resources[ResourceType.FOOD] == 0.0
+    assert state.resources[ResourceType.GOLD] == 0.0
+    assert (
+        state.action_cooldowns[EXPEDITION_ACTION_KEY]
+        == EXPEDITION_COOLDOWN_SECONDS
+    )
+    assert "6 soldiers" in result.message
+    assert "%" not in result.message
+
+
+def test_expedition_harsh_return_loses_soldiers_and_gains_cache() -> None:
+    state = expedition_ready_state()
+
+    result = expedition(state, roll=0.10, iron_reward=14, gold_reward=6)
+
+    assert result.success is True
+    assert state.units[UnitType.SOLDIER] == 7
+    assert state.resources[ResourceType.IRON] == 24.0
+    assert state.resources[ResourceType.GOLD] == 6.0
+    assert "3 soldiers" in result.message
+    assert "14 iron and 6 gold" in result.message
+    assert "%" not in result.message
+
+
+def test_expedition_can_find_ancient_armory() -> None:
+    state = expedition_ready_state()
+
+    result = expedition(state, roll=0.20, iron_reward=21, gold_reward=17)
+
+    assert result.success is True
+    assert state.resources[ResourceType.IRON] == 31.0
+    assert state.resources[ResourceType.GOLD] == 17.0
+    assert "ancient armory" in result.message
+    assert "%" not in result.message
+
+
+def test_expedition_can_find_forgotten_granary() -> None:
+    state = expedition_ready_state()
+
+    result = expedition(state, roll=0.30, food_reward=44, wood_reward=22)
+
+    assert result.success is True
+    assert state.resources[ResourceType.FOOD] == 44.0
+    assert state.resources[ResourceType.WOOD] == 32.0
+    assert "44 food and 22 wood" in result.message
+    assert "%" not in result.message
+
+
+def test_expedition_can_map_shell_shrine() -> None:
+    state = expedition_ready_state()
+
+    result = expedition(state, roll=0.50, shell_reward=33)
+
+    assert result.success is True
+    assert state.resources[ResourceType.SHELL] == 43.0
+    assert state.shell_fairy_bonus == 0.2
+    assert "+0.2/s shell income" in result.message
+    assert "%" not in result.message
+
+
+def test_expedition_can_liberate_workers() -> None:
+    state = expedition_ready_state()
+
+    result = expedition(state, roll=0.60)
+
+    assert result.success is True
+    assert state.units[UnitType.WORKER] == 2
+    assert "Worker +2" in result.message
+    assert "%" not in result.message
+
+
+def test_expedition_can_salvage_battlefield() -> None:
+    state = expedition_ready_state()
+
+    result = expedition(
+        state,
+        roll=0.80,
+        stone_reward=24,
+        iron_reward=26,
+        gold_reward=12,
+    )
+
+    assert result.success is True
+    assert state.resources[ResourceType.STONE] == 34.0
+    assert state.resources[ResourceType.IRON] == 36.0
+    assert state.resources[ResourceType.GOLD] == 12.0
+    assert "24 stone, 26 iron, and 12 gold" in result.message
+    assert "%" not in result.message
+
+
+def test_expedition_can_recruit_captain() -> None:
+    state = expedition_ready_state()
+
+    result = expedition(state, roll=0.90, shell_reward=71)
+
+    assert result.success is True
+    assert state.units[UnitType.CAPTAIN] == 2
+    assert state.resources[ResourceType.SHELL] == 81.0
+    assert "Captain +1 and 71 shell" in result.message
+    assert "%" not in result.message
+
+
+def test_expedition_cannot_run_while_on_cooldown() -> None:
+    state = expedition_ready_state()
+    state.action_cooldowns[EXPEDITION_ACTION_KEY] = 12.0
+
+    result = expedition(state, roll=0.3)
+
+    assert result.success is False
+    assert result.message == "Expedition is on cooldown for 12 seconds."
+    assert state.resources[ResourceType.FOOD] == 25.0
+    assert state.resources[ResourceType.GOLD] == 5.0
+
+
 def test_kindle_the_pyre_requires_wood() -> None:
     state = GameState()
     state.units[UnitType.SORCERER] = 1
@@ -581,11 +760,29 @@ def test_defend_requires_catapult() -> None:
     assert result.message == "Need at least 1 catapult to defend."
 
 
-def test_defend_is_available_with_catapult() -> None:
+def test_defend_requires_active_threat() -> None:
     state = GameState()
     state.buildings[BuildingType.CATAPULT] = 1
 
     result = defend(state)
 
+    assert result.success is False
+    assert result.message == "No active threats to defend against."
+
+
+def test_defend_stops_oldest_threat_and_keeps_catapult() -> None:
+    state = GameState()
+    state.buildings[BuildingType.CATAPULT] = 1
+    state.active_threats = [
+        ActiveThreat(key="goblin_raid", remaining_seconds=12.0),
+        ActiveThreat(key="mine_saboteurs", remaining_seconds=30.0),
+    ]
+
+    result = defend(state)
+
     assert result.success is True
-    assert "not implemented yet" in result.message
+    assert result.message == "Defended against Goblin Raid. The threat has been stopped."
+    assert state.buildings[BuildingType.CATAPULT] == 1
+    assert [active_threat.key for active_threat in state.active_threats] == [
+        "mine_saboteurs"
+    ]

@@ -4,6 +4,7 @@ import json
 from textual.widgets import DataTable, Static, TabbedContent
 
 from shellcromancer.actions import (
+    EXPEDITION_ACTION_KEY,
     HUNT_ACTION_KEY,
     KINDLE_PYRE_ACTION_KEY,
     PATROL_ACTION_KEY,
@@ -19,6 +20,7 @@ from shellcromancer.app import (
 from shellcromancer.buildings import BuildingType
 from shellcromancer.game_state import GameState
 from shellcromancer.resources import ResourceType
+from shellcromancer.threats import ActiveThreat
 from shellcromancer.units import UnitType
 
 
@@ -28,7 +30,9 @@ def test_render_state_snapshot_only_shows_implemented_features() -> None:
     assert "Scribe Tab" in rendered
     assert "Reign Tab" in rendered
     assert "Battle Tab" in rendered
-    assert "Battle plans are not implemented yet." in rendered
+    assert "Next threat roll: 10:00" in rendered
+    assert "No active threats." in rendered
+    assert "Encyclopedia Tab" in rendered
     assert "Resources Tab" not in rendered
     assert "Shop Tab" not in rendered
     assert "Future PvE Targets" not in rendered
@@ -48,6 +52,7 @@ def test_render_state_lists_units_buildings_and_actions() -> None:
     assert "Quarry" in rendered
     assert "Hunt" in rendered
     assert "Patrol" in rendered
+    assert "Expedition" in rendered
     assert "Captain" in rendered
     assert "Sorcerer" in rendered
     assert "Arcane Tower" in rendered
@@ -63,6 +68,7 @@ def test_menu_includes_new_units_buildings_and_actions() -> None:
     assert "Quarry" in labels
     assert "Hunt" in labels
     assert "Patrol" in labels
+    assert "Expedition" in labels
     assert "Captain" in labels
     assert "Sorcerer" in labels
     assert "Arcane Tower" in labels
@@ -77,6 +83,19 @@ def test_render_state_shows_gold_resource() -> None:
     assert "gold      0.0   (+0.0/s)" in rendered
 
 
+def test_render_state_shows_active_threats_and_encyclopedia() -> None:
+    state = GameState()
+    state.active_threats.append(ActiveThreat(key="goblin_raid", remaining_seconds=59.0))
+
+    rendered = render_state(state)
+
+    assert "Goblin Raid: 0:59" in rendered
+    assert "Destroys up to 2 farms" in rendered
+    assert "Resources" in rendered
+    assert "Threats" in rendered
+    assert "Mine Saboteurs" in rendered
+
+
 def test_app_uses_scribe_reign_and_battle_tabs(tmp_path) -> None:
     async def run_app() -> None:
         app = ShellcromancerApp(save_path=tmp_path / "save.json")
@@ -89,6 +108,7 @@ def test_app_uses_scribe_reign_and_battle_tabs(tmp_path) -> None:
             building_table = app.query_one("#building-table", DataTable)
             shop_view = app.query_one("#shop-view", Static)
             battle_view = app.query_one("#battle-view", Static)
+            encyclopedia_view = app.query_one("#encyclopedia-view", Static)
 
             assert tabs.active == "scribe-tab"
             assert resource_table.row_count == len(ResourceType)
@@ -97,7 +117,10 @@ def test_app_uses_scribe_reign_and_battle_tabs(tmp_path) -> None:
             assert unit_table.get_row_at(0) == ["Worker", "0"]
             assert building_table.get_row_at(0) == ["Farm", "0"]
             assert str(shop_view.content).startswith("Units")
-            assert str(battle_view.content) == "Battle plans are not implemented yet."
+            assert "Next threat roll: 10:00" in str(battle_view.content)
+            assert "No active threats." in str(battle_view.content)
+            assert "Resources" in str(encyclopedia_view.content)
+            assert "Goblin Raid" in str(encyclopedia_view.content)
 
     asyncio.run(run_app())
 
@@ -108,6 +131,7 @@ def test_app_frames_major_panels() -> None:
     assert "#resource-table, #unit-table, #building-table" in css
     assert "#shop-view" in css
     assert "#battle-view" in css
+    assert "#encyclopedia-view" in css
     assert "#selected" in css
     assert "#status" in css
     assert "#execute" not in css
@@ -165,6 +189,10 @@ def test_scribe_reign_and_battle_tab_shortcuts(tmp_path) -> None:
             await pilot.pause()
             assert tabs.active == "battle-tab"
 
+            await pilot.press("e")
+            await pilot.pause()
+            assert tabs.active == "encyclopedia-tab"
+
             await pilot.press("s")
             await pilot.pause()
             assert tabs.active == "scribe-tab"
@@ -210,8 +238,11 @@ def test_render_state_splits_resource_costs_from_requirements() -> None:
     patrol_rendered = render_state(
         GameState(), selected_action_index=action_index(2, 1)
     )
+    expedition_rendered = render_state(
+        GameState(), selected_action_index=action_index(2, 2)
+    )
     defend_rendered = render_state(
-        GameState(), selected_action_index=action_index(2, 3)
+        GameState(), selected_action_index=action_index(2, 4)
     )
 
     assert "Cost: 10 wood, 10 stone, 2 iron" in farm_rendered
@@ -221,11 +252,17 @@ def test_render_state_splits_resource_costs_from_requirements() -> None:
     assert "Cost: 10 food" in patrol_rendered
     assert "Requirements: 3 soldiers, cooldown ready" in patrol_rendered
 
+    assert "Cost: 25 food, 5 gold" in expedition_rendered
+    assert (
+        "Requirements: 1 captain, 10 soldiers, cooldown ready"
+        in expedition_rendered
+    )
+
     assert "Cost: -" in defend_rendered
-    assert "Requirements: 1 catapult" in defend_rendered
+    assert "Requirements: 1 catapult, active threat" in defend_rendered
 
     kindle_rendered = render_state(
-        GameState(), selected_action_index=action_index(2, 2)
+        GameState(), selected_action_index=action_index(2, 3)
     )
     assert "Cost: 100 wood" in kindle_rendered
     assert (
@@ -308,11 +345,22 @@ def test_render_state_shows_patrol_cooldown_behind_action() -> None:
     assert "Cooldown 1:59" in rendered
 
 
+def test_render_state_shows_expedition_cooldown_behind_action() -> None:
+    state = GameState()
+    state.action_cooldowns[EXPEDITION_ACTION_KEY] = 299.0
+
+    rendered = render_state(state, selected_action_index=action_index(2, 2))
+
+    assert "Expedition" in rendered
+    assert "4:59" in rendered
+    assert "Cooldown 4:59" in rendered
+
+
 def test_render_state_shows_kindle_the_pyre_cooldown_behind_action() -> None:
     state = GameState()
     state.action_cooldowns[KINDLE_PYRE_ACTION_KEY] = 599.0
 
-    rendered = render_state(state, selected_action_index=action_index(2, 2))
+    rendered = render_state(state, selected_action_index=action_index(2, 3))
 
     assert "Kindle the Pyre" in rendered
     assert "9:59" in rendered
@@ -356,6 +404,28 @@ def test_patrol_affordability_requires_soldiers_food_and_cooldown() -> None:
     assert is_action_affordable(state, patrol) is False
 
 
+def test_expedition_affordability_requires_requirements() -> None:
+    state = GameState()
+    expedition = next(
+        action for action in MENU_ACTIONS if action.label == "Expedition"
+    )
+
+    assert is_action_affordable(state, expedition) is False
+
+    state.units[UnitType.CAPTAIN] = 1
+    state.units[UnitType.SOLDIER] = 10
+    state.resources[ResourceType.FOOD] = 25.0
+    state.resources[ResourceType.GOLD] = 5.0
+    assert is_action_affordable(state, expedition) is True
+
+    state.resources[ResourceType.GOLD] = 4.9
+    assert is_action_affordable(state, expedition) is False
+
+    state.resources[ResourceType.GOLD] = 5.0
+    state.action_cooldowns[EXPEDITION_ACTION_KEY] = 1.0
+    assert is_action_affordable(state, expedition) is False
+
+
 def test_kindle_the_pyre_affordability_requires_wood_tower_and_cooldown() -> None:
     state = GameState()
     kindle = next(action for action in MENU_ACTIONS if action.label == "Kindle the Pyre")
@@ -382,6 +452,9 @@ def test_defend_affordability_requires_catapult() -> None:
     assert is_action_affordable(state, defend) is False
 
     state.buildings[BuildingType.CATAPULT] = 1
+    assert is_action_affordable(state, defend) is False
+
+    state.active_threats.append(ActiveThreat(key="goblin_raid", remaining_seconds=60.0))
     assert is_action_affordable(state, defend) is True
 
 

@@ -21,6 +21,7 @@ from shellcromancer.economy import mark_dead_if_food_depleted, tick
 from shellcromancer.game_state import GameState
 from shellcromancer.persistence import load_state, save_state
 from shellcromancer.resources import ALL_RESOURCES, ResourceType
+from shellcromancer.threats import THREAT_DEFINITIONS
 from shellcromancer.units import UNIT_DEFINITIONS, UnitType
 
 
@@ -33,6 +34,7 @@ class MenuAction:
     run: Callable[[GameState], actions.ActionResult]
     cooldown_key: str | None = None
     building_costs: dict[BuildingType, int] | None = None
+    requires_active_threat: bool = False
 
 
 UNIT_ACTIONS = (
@@ -156,6 +158,17 @@ ONE_TIME_ACTIONS = (
         cooldown_key=actions.PATROL_ACTION_KEY,
     ),
     MenuAction(
+        label="Expedition",
+        cost=(
+            "1 captain, 10 soldiers, 25 food, 5 gold. High-risk trek with "
+            "major resource, worker, captain, and shell income rewards."
+        ),
+        resource_costs={ResourceType.FOOD: 25.0, ResourceType.GOLD: 5.0},
+        unit_costs={UnitType.CAPTAIN: 1, UnitType.SOLDIER: 10},
+        run=actions.expedition,
+        cooldown_key=actions.EXPEDITION_ACTION_KEY,
+    ),
+    MenuAction(
         label="Kindle the Pyre",
         cost="1 sorcerer, 1 arcane tower, 100 wood. Burn offerings for shell or gold.",
         resource_costs={ResourceType.WOOD: 100.0},
@@ -166,11 +179,12 @@ ONE_TIME_ACTIONS = (
     ),
     MenuAction(
         label="Defend",
-        cost="Requires 1 catapult. Battle effect will be implemented later.",
+        cost="Requires 1 catapult and an active threat. Stops the oldest threat.",
         resource_costs={},
         unit_costs={},
         run=actions.defend,
         building_costs={BuildingType.CATAPULT: 1},
+        requires_active_threat=True,
     ),
 )
 
@@ -210,7 +224,7 @@ class ShellcromancerApp(App[None]):
         height: auto;
     }
 
-    #shop-view, #battle-view {
+    #shop-view, #battle-view, #encyclopedia-view {
         padding: 1;
         height: auto;
         border: solid $surface-lighten-1;
@@ -249,6 +263,7 @@ class ShellcromancerApp(App[None]):
         Binding("s", "show_scribe", "Scribe"),
         Binding("r", "show_reign", "Reign"),
         Binding("b", "show_battle", "Battle"),
+        Binding("e", "show_encyclopedia", "Encyclopedia"),
         Binding("n", "reset", "New game after death"),
         Binding("q", "quit", "Quit"),
     ]
@@ -270,9 +285,8 @@ class ShellcromancerApp(App[None]):
         )
         self.shop_view = Static(id="shop-view")
         self.selected_view = Static(id="selected")
-        self.battle_view = Static(
-            "Battle plans are not implemented yet.", id="battle-view"
-        )
+        self.battle_view = Static(id="battle-view")
+        self.encyclopedia_view = Static(id="encyclopedia-view")
         self.status_view = Static(id="status")
         self.tables_ready = False
 
@@ -294,6 +308,8 @@ class ShellcromancerApp(App[None]):
                 yield self.selected_view
             with TabPane("Battle", id="battle-tab"):
                 yield self.battle_view
+            with TabPane("Encyclopedia", id="encyclopedia-tab"):
+                yield self.encyclopedia_view
         yield self.status_view
         yield Footer()
 
@@ -352,6 +368,9 @@ class ShellcromancerApp(App[None]):
     def action_show_battle(self) -> None:
         self.query_one(TabbedContent).active = "battle-tab"
 
+    def action_show_encyclopedia(self) -> None:
+        self.query_one(TabbedContent).active = "encyclopedia-tab"
+
     def action_reset(self) -> None:
         if not self.state.is_dead:
             return
@@ -369,6 +388,8 @@ class ShellcromancerApp(App[None]):
         self._refresh_building_table()
         self._refresh_shop_view()
         self._refresh_selected_view()
+        self._refresh_battle_view()
+        self._refresh_encyclopedia_view()
         self._refresh_status_view()
 
     def _refresh_resource_table(self) -> None:
@@ -406,6 +427,12 @@ class ShellcromancerApp(App[None]):
             f"Requirements: {format_action_requirements(menu_action)}"
         )
 
+    def _refresh_battle_view(self) -> None:
+        self.battle_view.update(format_battle_text(self.state))
+
+    def _refresh_encyclopedia_view(self) -> None:
+        self.encyclopedia_view.update(format_encyclopedia_text())
+
     def _refresh_status_view(self) -> None:
         if self.state.is_dead:
             self.status_view.update(
@@ -437,7 +464,14 @@ def is_action_affordable(state: GameState, menu_action: MenuAction) -> bool:
         menu_action.cooldown_key is None
         or state.action_cooldowns.get(menu_action.cooldown_key, 0.0) <= 0
     )
-    return has_resources and has_units and has_buildings and cooldown_ready
+    threat_ready = not menu_action.requires_active_threat or bool(state.active_threats)
+    return (
+        has_resources
+        and has_units
+        and has_buildings
+        and cooldown_ready
+        and threat_ready
+    )
 
 
 def action_status_text(state: GameState, menu_action: MenuAction) -> str:
@@ -504,6 +538,8 @@ def format_action_requirements(menu_action: MenuAction) -> str:
     )
     if menu_action.cooldown_key is not None:
         requirements.append("cooldown ready")
+    if menu_action.requires_active_threat:
+        requirements.append("active threat")
 
     if not requirements:
         return "-"
@@ -593,10 +629,93 @@ def render_state(state: GameState, selected_action_index: int = 0) -> str:
             f"Requirements: {format_action_requirements(menu_action)}",
             "",
             "Battle Tab",
-            "Battle plans are not implemented yet.",
+            *format_battle_lines(state),
+            "",
+            "Encyclopedia Tab",
+            *format_encyclopedia_lines(),
             "",
             f"Last action: {state.last_action_message}",
         ]
+    )
+
+
+def format_battle_text(state: GameState) -> str:
+    return "\n".join(format_battle_lines(state))
+
+
+def format_battle_lines(state: GameState) -> list[str]:
+    lines = [
+        f"Next threat roll: {format_cooldown(state.threat_roll_cooldown)}",
+        "",
+        "Current Threats",
+    ]
+    if not state.active_threats:
+        lines.append("No active threats.")
+        return lines
+
+    for active_threat in state.active_threats:
+        definition = THREAT_DEFINITIONS.get(active_threat.key)
+        if definition is None:
+            lines.append(
+                f"- {active_threat.key}: {format_cooldown(active_threat.remaining_seconds)}"
+            )
+            continue
+
+        lines.append(
+            f"- {definition.name}: {format_cooldown(active_threat.remaining_seconds)}"
+        )
+        lines.append(f"  {definition.description}")
+        lines.append(f"  Effect: {definition.effect_text}")
+    return lines
+
+
+def format_encyclopedia_text() -> str:
+    return "\n".join(format_encyclopedia_lines())
+
+
+def format_encyclopedia_lines() -> list[str]:
+    lines = ["Resources"]
+    for resource in ALL_RESOURCES:
+        lines.append(f"- {resource.value.title()}: Stored resource used by the realm.")
+
+    lines.extend(["", "Units"])
+    for unit_type in UnitType:
+        definition = UNIT_DEFINITIONS[unit_type]
+        lines.append(
+            f"- {definition.name}: production {format_rate_map(definition.production)}; "
+            f"upkeep {format_rate_map(definition.upkeep)}."
+        )
+
+    lines.extend(["", "Buildings"])
+    for building_type in BuildingType:
+        definition = BUILDING_DEFINITIONS[building_type]
+        lines.append(
+            f"- {definition.name}: production {format_rate_map(definition.production)}; "
+            f"upkeep {format_rate_map(definition.upkeep)}."
+        )
+
+    lines.extend(["", "Actions"])
+    for menu_action in MENU_ACTIONS:
+        lines.append(
+            f"- {menu_action.label}: cost {format_action_cost(menu_action)}; "
+            f"requirements {format_action_requirements(menu_action)}."
+        )
+
+    lines.extend(["", "Threats"])
+    for definition in THREAT_DEFINITIONS.values():
+        lines.append(
+            f"- {definition.name}: {definition.description} "
+            f"Countdown {format_cooldown(definition.countdown_seconds)}. "
+            f"{definition.effect_text}"
+        )
+    return lines
+
+
+def format_rate_map(values: dict[ResourceType, float]) -> str:
+    if not values:
+        return "none"
+    return ", ".join(
+        f"{amount:+.1f} {resource.value}/s" for resource, amount in values.items()
     )
 
 

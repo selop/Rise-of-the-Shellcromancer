@@ -2,6 +2,12 @@ from shellcromancer.buildings import BUILDING_DEFINITIONS
 from shellcromancer.actions import PATROL_ACTION_KEY, patrol
 from shellcromancer.game_state import GameState, empty_delta
 from shellcromancer.resources import ResourceType
+from shellcromancer.threats import (
+    THREAT_ROLL_SECONDS,
+    active_threat_name,
+    create_random_threat,
+    resolve_threat,
+)
 from shellcromancer.units import UNIT_DEFINITIONS, UnitType
 
 
@@ -74,6 +80,36 @@ def run_automatic_patrol(state: GameState) -> None:
     patrol(state)
 
 
+def update_threats(state: GameState, elapsed_seconds: float = 1.0) -> None:
+    expired_messages = []
+    remaining_threats = []
+    for active_threat in state.active_threats:
+        active_threat.remaining_seconds = max(
+            0.0, active_threat.remaining_seconds - elapsed_seconds
+        )
+        if active_threat.remaining_seconds <= 0:
+            expired_messages.append(resolve_threat(state, active_threat))
+        else:
+            remaining_threats.append(active_threat)
+    state.active_threats = remaining_threats
+
+    if expired_messages:
+        state.last_action_message = " ".join(expired_messages)
+
+    state.threat_roll_cooldown = max(
+        0.0, state.threat_roll_cooldown - elapsed_seconds
+    )
+    if state.threat_roll_cooldown <= 0:
+        active_threat = create_random_threat()
+        state.active_threats.append(active_threat)
+        state.threat_roll_cooldown = THREAT_ROLL_SECONDS
+        new_threat_message = f"New threat: {active_threat_name(active_threat)}."
+        if expired_messages:
+            state.last_action_message = f"{state.last_action_message} {new_threat_message}"
+        else:
+            state.last_action_message = new_threat_message
+
+
 def tick(state: GameState) -> None:
     if state.is_dead:
         return
@@ -85,3 +121,4 @@ def tick(state: GameState) -> None:
 
     reduce_cooldowns(state)
     run_automatic_patrol(state)
+    update_threats(state)

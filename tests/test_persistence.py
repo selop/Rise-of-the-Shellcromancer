@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from shellcromancer.actions import HUNT_ACTION_KEY
+from shellcromancer.actions import EXPEDITION_ACTION_KEY, HUNT_ACTION_KEY
 from shellcromancer.buildings import BuildingType
 from shellcromancer.game_state import GameState
 from shellcromancer.persistence import (
@@ -13,6 +13,7 @@ from shellcromancer.persistence import (
     state_from_dict,
 )
 from shellcromancer.resources import ResourceType
+from shellcromancer.threats import ActiveThreat
 from shellcromancer.units import UnitType
 
 
@@ -26,6 +27,8 @@ def test_save_and_load_state_round_trip(tmp_path) -> None:
     state.last_delta[ResourceType.FOOD] = -0.4
     state.last_action_message = "Stored state."
     state.shell_fairy_bonus = 0.3
+    state.active_threats.append(ActiveThreat(key="goblin_raid", remaining_seconds=42.0))
+    state.threat_roll_cooldown = 123.0
     state.is_dead = True
 
     save_state(state, save_path)
@@ -38,6 +41,10 @@ def test_save_and_load_state_round_trip(tmp_path) -> None:
     assert loaded.last_delta[ResourceType.FOOD] == pytest.approx(-0.4)
     assert loaded.last_action_message == "Stored state."
     assert loaded.shell_fairy_bonus == pytest.approx(0.3)
+    assert loaded.active_threats == [
+        ActiveThreat(key="goblin_raid", remaining_seconds=42.0)
+    ]
+    assert loaded.threat_roll_cooldown == pytest.approx(123.0)
     assert loaded.is_dead is True
 
 
@@ -67,6 +74,24 @@ def test_state_from_dict_fills_missing_fields_with_defaults() -> None:
     assert state.units[UnitType.WORKER] == 1
     assert state.units[UnitType.SOLDIER] == 0
     assert state.action_cooldowns[HUNT_ACTION_KEY] == pytest.approx(0.0)
+    assert state.action_cooldowns[EXPEDITION_ACTION_KEY] == pytest.approx(0.0)
+    assert state.active_threats == []
+    assert state.threat_roll_cooldown == pytest.approx(600.0)
+
+
+def test_state_from_dict_ignores_unknown_threats() -> None:
+    state = state_from_dict(
+        {
+            "active_threats": [
+                {"key": "goblin_raid", "remaining_seconds": 17.0},
+                {"key": "unknown", "remaining_seconds": 99.0},
+            ]
+        }
+    )
+
+    assert state.active_threats == [
+        ActiveThreat(key="goblin_raid", remaining_seconds=17.0)
+    ]
 
 
 def test_default_save_path_respects_xdg_data_home(
@@ -86,3 +111,5 @@ def test_save_file_uses_enum_values_as_keys(tmp_path) -> None:
     assert "food" in data["resources"]
     assert "worker" in data["units"]
     assert "farm" in data["buildings"]
+    assert "active_threats" in data
+    assert "threat_roll_cooldown" in data

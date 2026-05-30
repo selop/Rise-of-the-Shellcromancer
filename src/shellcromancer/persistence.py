@@ -6,6 +6,7 @@ from typing import TypeVar
 from shellcromancer.buildings import BuildingType
 from shellcromancer.game_state import GameState
 from shellcromancer.resources import ResourceType
+from shellcromancer.threats import THREAT_DEFINITIONS, THREAT_ROLL_SECONDS, ActiveThreat
 from shellcromancer.units import UnitType
 
 
@@ -32,6 +33,14 @@ def state_to_dict(state: GameState) -> dict[str, object]:
             building.value: count for building, count in state.buildings.items()
         },
         "action_cooldowns": dict(state.action_cooldowns),
+        "active_threats": [
+            {
+                "key": active_threat.key,
+                "remaining_seconds": active_threat.remaining_seconds,
+            }
+            for active_threat in state.active_threats
+        ],
+        "threat_roll_cooldown": state.threat_roll_cooldown,
         "last_delta": {
             resource.value: amount for resource, amount in state.last_delta.items()
         },
@@ -56,6 +65,10 @@ def state_from_dict(data: dict[str, object]) -> GameState:
         ),
         action_cooldowns=_string_float_mapping(
             data.get("action_cooldowns"), default_state.action_cooldowns
+        ),
+        active_threats=_active_threats(data.get("active_threats")),
+        threat_roll_cooldown=_float_or_default(
+            data.get("threat_roll_cooldown"), THREAT_ROLL_SECONDS
         ),
         last_delta=_enum_float_mapping(
             data.get("last_delta"), ResourceType, default_state.last_delta
@@ -136,6 +149,31 @@ def _string_float_mapping(
         if isinstance(key, str):
             values[key] = _float_or_default(value, values.get(key, 0.0))
     return values
+
+
+def _active_threats(raw_value: object) -> list[ActiveThreat]:
+    if not isinstance(raw_value, list):
+        return []
+
+    active_threats = []
+    for item in raw_value:
+        if not isinstance(item, dict):
+            continue
+
+        key = item.get("key")
+        if not isinstance(key, str) or key not in THREAT_DEFINITIONS:
+            continue
+
+        active_threats.append(
+            ActiveThreat(
+                key=key,
+                remaining_seconds=_float_or_default(
+                    item.get("remaining_seconds"),
+                    THREAT_DEFINITIONS[key].countdown_seconds,
+                ),
+            )
+        )
+    return active_threats
 
 
 def _float_or_default(value: object, default: float) -> float:
