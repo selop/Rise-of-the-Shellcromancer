@@ -37,6 +37,7 @@ def test_save_and_load_state_round_trip(tmp_path) -> None:
     state.active_threats.append(ActiveThreat(key="goblin_raid", remaining_seconds=42.0))
     state.threat_roll_cooldown = 123.0
     state.is_dead = True
+    state.run_elapsed_seconds = 456.0
 
     save_state(state, save_path)
     loaded = load_state(save_path)
@@ -59,6 +60,7 @@ def test_save_and_load_state_round_trip(tmp_path) -> None:
     ]
     assert loaded.threat_roll_cooldown == pytest.approx(123.0)
     assert loaded.is_dead is True
+    assert loaded.run_elapsed_seconds == pytest.approx(456.0)
 
 
 def test_load_missing_save_returns_fresh_state(tmp_path) -> None:
@@ -93,6 +95,7 @@ def test_state_from_dict_fills_missing_fields_with_defaults() -> None:
     assert state.action_cooldowns[DEFEND_ACTION_KEY] == pytest.approx(0.0)
     assert state.active_threats == []
     assert state.threat_roll_cooldown == pytest.approx(600.0)
+    assert state.run_elapsed_seconds == pytest.approx(0.0)
 
 
 def test_state_from_dict_loads_old_last_action_message_into_history() -> None:

@@ -29,6 +29,7 @@ def test_render_state_snapshot_only_shows_implemented_features() -> None:
     rendered = render_state(GameState())
 
     assert "Scribe Tab" in rendered
+    assert "Run Time: 0:00" in rendered
     assert "Reign Tab" in rendered
     assert "Battle Tab" in rendered
     assert "Next threat roll: 10:00" in rendered
@@ -91,12 +92,13 @@ def test_render_state_shows_gold_resource() -> None:
 
 def test_render_state_shows_active_threats_and_encyclopedia() -> None:
     state = GameState()
+    state.run_elapsed_seconds = 1200.0
     state.active_threats.append(ActiveThreat(key="goblin_raid", remaining_seconds=59.0))
 
     rendered = render_state(state)
 
     assert "Goblin Raid: 0:59" in rendered
-    assert "Destroys up to 2 farms" in rendered
+    assert "Destroys up to 4 farms" in rendered
     assert "Resources" in rendered
     assert "Threats" in rendered
     assert "Mine Saboteurs" in rendered
@@ -159,6 +161,7 @@ def test_status_panel_shows_story_and_last_three_actions(tmp_path) -> None:
             app._refresh_view()
 
             status = app.query_one("#status", Static)
+            assert "Run Time: 0:00" in str(status.content)
             content = str(status.content)
             assert "Story" in content
             assert "A patrol returned with gold." in content
@@ -207,6 +210,7 @@ def test_status_panel_shows_game_over_story(tmp_path) -> None:
 
             status = app.query_one("#status", Static)
             assert "Game Over" in str(status.content)
+            assert "Run Time: 0:00" in str(status.content)
             assert "The stores are empty." in str(status.content)
             assert "Press n to start a new run." in str(status.content)
 
@@ -569,6 +573,7 @@ def test_arcane_tower_affordability_requires_sorcerer_and_stone() -> None:
 def test_dead_state_renders_game_over_and_restart_key() -> None:
     state = GameState()
     state.is_dead = True
+    state.run_elapsed_seconds = 125.0
     state.resources[ResourceType.FOOD] = 0.0
     record_action_message(state, "The stores are empty.")
 
@@ -576,6 +581,7 @@ def test_dead_state_renders_game_over_and_restart_key() -> None:
 
     assert "Game Over" in rendered
     assert "Food reached 0" in rendered
+    assert "Final Run Time: 2:05" in rendered
     assert "Press n to start a new run" in rendered
     assert "The stores are empty." in rendered
 

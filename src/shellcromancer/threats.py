@@ -5,6 +5,11 @@ from shellcromancer.buildings import BuildingType
 
 
 THREAT_ROLL_SECONDS = 600.0
+THREAT_SCALING_INTERVAL_SECONDS = 600.0
+THREAT_DAMAGE_PER_TIER = 1
+THREAT_MAX_DAMAGE_COUNT = 5
+THREAT_COUNTDOWN_REDUCTION_PER_TIER = 30.0
+THREAT_MIN_COUNTDOWN_SECONDS = 90.0
 
 
 @dataclass(frozen=True)
@@ -64,11 +69,36 @@ THREAT_DEFINITIONS: dict[str, ThreatDefinition] = {
 }
 
 
-def create_random_threat() -> ActiveThreat:
+def threat_scaling_tier(state: object) -> int:
+    elapsed_seconds = getattr(state, "run_elapsed_seconds", 0.0)
+    return int(elapsed_seconds // THREAT_SCALING_INTERVAL_SECONDS)
+
+
+def scaled_threat_damage(definition: ThreatDefinition, state: object) -> int:
+    return min(
+        THREAT_MAX_DAMAGE_COUNT,
+        definition.damage_count
+        + THREAT_DAMAGE_PER_TIER * threat_scaling_tier(state),
+    )
+
+
+def scaled_threat_countdown(definition: ThreatDefinition, state: object) -> float:
+    return max(
+        THREAT_MIN_COUNTDOWN_SECONDS,
+        definition.countdown_seconds
+        - THREAT_COUNTDOWN_REDUCTION_PER_TIER * threat_scaling_tier(state),
+    )
+
+
+def create_random_threat(state: object | None = None) -> ActiveThreat:
     definition = choice(tuple(THREAT_DEFINITIONS.values()))
     return ActiveThreat(
         key=definition.key,
-        remaining_seconds=definition.countdown_seconds,
+        remaining_seconds=(
+            definition.countdown_seconds
+            if state is None
+            else scaled_threat_countdown(definition, state)
+        ),
     )
 
 
@@ -85,7 +115,7 @@ def resolve_threat(state: object, active_threat: ActiveThreat) -> str:
         return f"Unknown threat {active_threat.key} faded without effect."
 
     destroyed = min(
-        definition.damage_count,
+        scaled_threat_damage(definition, state),
         state.buildings[definition.target_building],
     )
     state.buildings[definition.target_building] -= destroyed

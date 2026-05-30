@@ -129,7 +129,7 @@ def update_threats(state: GameState, elapsed_seconds: float = 1.0) -> None:
     )
     new_threat_message = ""
     if state.threat_roll_cooldown <= 0:
-        active_threat = create_random_threat()
+        active_threat = create_random_threat(state)
         state.active_threats.append(active_threat)
         state.threat_roll_cooldown = THREAT_ROLL_SECONDS
         new_threat_message = f"New threat: {active_threat_name(active_threat)}."
@@ -144,6 +144,8 @@ def update_threats(state: GameState, elapsed_seconds: float = 1.0) -> None:
 def tick(state: GameState) -> None:
     if state.is_dead:
         return
+
+    state.run_elapsed_seconds += 1.0
 
     delta = calculate_delta(state)
     apply_delta(state, delta)

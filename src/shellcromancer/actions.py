@@ -22,6 +22,8 @@ EXPEDITION_COOLDOWN_SECONDS = 300.0
 EXPEDITION_SHELL_FAIRY_BONUS = 0.2
 KINDLE_PYRE_ACTION_KEY = "kindle_the_pyre"
 KINDLE_PYRE_COOLDOWN_SECONDS = 600.0
+KINDLE_PYRE_REWARD_BONUS_PER_POWER = 0.25
+KINDLE_PYRE_MAX_REWARD_MULTIPLIER = 3.0
 DEFEND_ACTION_KEY = "defend"
 DEFEND_COOLDOWN_SECONDS = 300.0
 DEFEND_BASE_SUCCESS_CHANCE = 0.25
@@ -66,10 +68,24 @@ def _add_action_threat(
     state: GameState, threat_factory: ThreatFactory | None = None
 ) -> str:
     active_threat = (
-        create_random_threat() if threat_factory is None else threat_factory()
+        create_random_threat(state) if threat_factory is None else threat_factory()
     )
     state.active_threats.append(active_threat)
     return active_threat_name(active_threat)
+
+
+def kindle_pyre_reward_multiplier(state: GameState) -> float:
+    pyre_power = (
+        state.units[UnitType.SORCERER] + state.buildings[BuildingType.ARCANE_TOWER]
+    )
+    return min(
+        KINDLE_PYRE_MAX_REWARD_MULTIPLIER,
+        1.0 + KINDLE_PYRE_REWARD_BONUS_PER_POWER * max(0, pyre_power - 2),
+    )
+
+
+def scaled_kindle_pyre_reward(state: GameState, reward: int) -> int:
+    return int(round(reward * kindle_pyre_reward_multiplier(state)))
 
 
 def create_worker(state: GameState) -> ActionResult:
@@ -608,7 +624,8 @@ def kindle_the_pyre(
         )
 
     if outcome_roll < 0.60:
-        reward = randint(10, 50) if shell_reward is None else shell_reward
+        base_reward = randint(10, 50) if shell_reward is None else shell_reward
+        reward = scaled_kindle_pyre_reward(state, base_reward)
         state.resources[ResourceType.SHELL] += reward
         return _finish(
             state,
@@ -617,7 +634,8 @@ def kindle_the_pyre(
             f"yielding {reward} shell.",
         )
 
-    reward = randint(5, 10) if gold_reward is None else gold_reward
+    base_reward = randint(5, 10) if gold_reward is None else gold_reward
+    reward = scaled_kindle_pyre_reward(state, base_reward)
     state.resources[ResourceType.GOLD] += reward
     return _finish(
         state,

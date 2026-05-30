@@ -864,6 +864,19 @@ def test_kindle_the_pyre_can_gain_shell() -> None:
     assert "%" not in result.message
 
 
+def test_kindle_the_pyre_shell_reward_scales_with_sorcerers_and_towers() -> None:
+    state = GameState()
+    state.units[UnitType.SORCERER] = 3
+    state.buildings[BuildingType.ARCANE_TOWER] = 3
+    state.resources[ResourceType.WOOD] = 100.0
+
+    result = kindle_the_pyre(state, roll=0.5, shell_reward=37)
+
+    assert result.success is True
+    assert state.resources[ResourceType.SHELL] == 84.0
+    assert "yielding 74 shell" in result.message
+
+
 def test_kindle_the_pyre_can_gain_gold() -> None:
     state = GameState()
     state.units[UnitType.SORCERER] = 1
@@ -878,6 +891,19 @@ def test_kindle_the_pyre_can_gain_gold() -> None:
     assert state.action_cooldowns[KINDLE_PYRE_ACTION_KEY] == KINDLE_PYRE_COOLDOWN_SECONDS
     assert "yielding 6 gold" in result.message
     assert "%" not in result.message
+
+
+def test_kindle_the_pyre_gold_reward_scales_with_sorcerers_and_towers() -> None:
+    state = GameState()
+    state.units[UnitType.SORCERER] = 3
+    state.buildings[BuildingType.ARCANE_TOWER] = 3
+    state.resources[ResourceType.WOOD] = 100.0
+
+    result = kindle_the_pyre(state, roll=0.8, gold_reward=6)
+
+    assert result.success is True
+    assert state.resources[ResourceType.GOLD] == 12.0
+    assert "yielding 12 gold" in result.message
 
 
 def test_kindle_the_pyre_cannot_run_while_on_cooldown() -> None:

@@ -16,7 +16,12 @@ from shellcromancer.economy import (
 )
 from shellcromancer.game_state import GameState
 from shellcromancer.resources import ResourceType
-from shellcromancer.threats import THREAT_ROLL_SECONDS, ActiveThreat
+from shellcromancer.threats import (
+    THREAT_DEFINITIONS,
+    THREAT_ROLL_SECONDS,
+    ActiveThreat,
+    scaled_threat_countdown,
+)
 from shellcromancer.units import UnitType
 
 
@@ -234,6 +239,16 @@ def test_tick_reduces_threat_roll_cooldown() -> None:
     tick(state)
 
     assert state.threat_roll_cooldown == pytest.approx(THREAT_ROLL_SECONDS - 1.0)
+    assert state.run_elapsed_seconds == pytest.approx(1.0)
+
+
+def test_tick_does_not_advance_run_timer_after_death() -> None:
+    state = GameState()
+    state.is_dead = True
+
+    tick(state)
+
+    assert state.run_elapsed_seconds == pytest.approx(0.0)
 
 
 def test_tick_adds_threat_when_roll_timer_expires(
@@ -242,7 +257,8 @@ def test_tick_adds_threat_when_roll_timer_expires(
     state = GameState()
     state.threat_roll_cooldown = 1.0
 
-    def fake_create_random_threat() -> ActiveThreat:
+    def fake_create_random_threat(threat_state: GameState) -> ActiveThreat:
+        assert threat_state is state
         return ActiveThreat(key="goblin_raid", remaining_seconds=300.0)
 
     monkeypatch.setattr(
@@ -256,6 +272,32 @@ def test_tick_adds_threat_when_roll_timer_expires(
         ActiveThreat(key="goblin_raid", remaining_seconds=300.0)
     ]
     assert state.last_action_message == "New threat: Goblin Raid."
+
+
+def test_tick_adds_scaled_threat_when_roll_timer_expires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GameState()
+    state.run_elapsed_seconds = 1200.0
+    state.threat_roll_cooldown = 1.0
+
+    monkeypatch.setattr(
+        "shellcromancer.threats.choice",
+        lambda definitions: THREAT_DEFINITIONS["goblin_raid"],
+    )
+
+    tick(state)
+
+    assert state.active_threats == [
+        ActiveThreat(key="goblin_raid", remaining_seconds=240.0)
+    ]
+
+
+def test_scaled_threat_countdown_is_capped() -> None:
+    state = GameState()
+    state.run_elapsed_seconds = 99999.0
+
+    assert scaled_threat_countdown(THREAT_DEFINITIONS["goblin_raid"], state) == 90.0
 
 
 def test_tick_reduces_active_threat_countdown() -> None:
@@ -279,6 +321,30 @@ def test_expired_goblin_raid_destroys_up_to_two_farms() -> None:
     assert state.buildings[BuildingType.FARM] == 1
     assert state.active_threats == []
     assert state.last_action_message == "Goblin Raid struck and destroyed 2 farms."
+
+
+def test_expired_threat_damage_scales_with_run_time() -> None:
+    state = GameState()
+    state.run_elapsed_seconds = 1200.0
+    state.buildings[BuildingType.FARM] = 5
+    state.active_threats.append(ActiveThreat(key="goblin_raid", remaining_seconds=1.0))
+
+    tick(state)
+
+    assert state.buildings[BuildingType.FARM] == 1
+    assert state.last_action_message == "Goblin Raid struck and destroyed 4 farms."
+
+
+def test_expired_threat_damage_is_capped() -> None:
+    state = GameState()
+    state.run_elapsed_seconds = 3000.0
+    state.buildings[BuildingType.FARM] = 7
+    state.active_threats.append(ActiveThreat(key="goblin_raid", remaining_seconds=1.0))
+
+    tick(state)
+
+    assert state.buildings[BuildingType.FARM] == 2
+    assert state.last_action_message == "Goblin Raid struck and destroyed 5 farms."
 
 
 def test_expired_threat_without_target_does_not_crash() -> None:

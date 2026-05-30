@@ -55,6 +55,7 @@ class GameState:
     action_history: list[str] = field(default_factory=initial_action_history)
     shell_fairy_bonus: float = 0.0
     is_dead: bool = False
+    run_elapsed_seconds: float = 0.0
 
 
 def record_action_message(state: GameState, message: str) -> None:

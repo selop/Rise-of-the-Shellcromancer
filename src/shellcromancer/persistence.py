@@ -52,6 +52,7 @@ def state_to_dict(state: GameState) -> dict[str, object]:
         "action_history": state.action_history[-ACTION_HISTORY_LIMIT:],
         "shell_fairy_bonus": state.shell_fairy_bonus,
         "is_dead": state.is_dead,
+        "run_elapsed_seconds": state.run_elapsed_seconds,
     }
 
 
@@ -98,6 +99,9 @@ def state_from_dict(data: dict[str, object]) -> GameState:
     )
     is_dead = data.get("is_dead", default_state.is_dead)
     state.is_dead = is_dead if isinstance(is_dead, bool) else default_state.is_dead
+    state.run_elapsed_seconds = _float_or_default(
+        data.get("run_elapsed_seconds"), default_state.run_elapsed_seconds
+    )
     return state
 
 

@@ -50,6 +50,9 @@ Encyclopedia tab lists current resources, units, buildings, actions, and threats
 from game data. Green entries are ready to buy or use, while blocked entries are
 red and cooldowns are yellow.
 
+The status panel shows the current run time while playing. Game over shows the
+final run length.
+
 Only the currently selected shop item shows its recipe or cost below the shop.
 
 Game progress is saved automatically to the Linux XDG data directory. By
@@ -99,7 +102,7 @@ One-time actions:
   captain.
 - Kindle the Pyre: requires 1 sorcerer and 1 arcane tower, costs 100 wood, has
   a 10 minute cooldown, and can leave only ash, reveal 10-50 shell, or yield
-  5-10 gold.
+  5-10 gold. Rewards scale with sorcerers and arcane towers.
 - Defend: requires 1 catapult and an active threat, has a 5 minute cooldown,
   and has a 25-75% chance to stop the oldest active threat. Each catapult and
   captain adds 10% success chance, capped at 75%. Any defense attempt has a
@@ -134,6 +137,9 @@ Threats:
 
 - Every 10 minutes, a new threat is added.
 - Each threat has a 5 minute countdown.
+- Run time increases threat criticality every 10 minutes: threats destroy 1
+  additional building and arrive 30 seconds faster per tier, capped at 5
+  destroyed buildings and a 90 second countdown.
 - Goblin Raid destroys up to 2 farms when its countdown reaches zero.
 - Mine Saboteurs destroy up to 1 mine when their countdown reaches zero.
 - Quarry Raiders destroy up to 1 quarry when their countdown reaches zero.

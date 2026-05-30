@@ -21,7 +21,12 @@ from shellcromancer.economy import mark_dead_if_food_depleted, tick
 from shellcromancer.game_state import GameState
 from shellcromancer.persistence import load_state, save_state
 from shellcromancer.resources import ALL_RESOURCES, ResourceType
-from shellcromancer.threats import THREAT_DEFINITIONS
+from shellcromancer.threats import (
+    THREAT_DEFINITIONS,
+    ThreatDefinition,
+    scaled_threat_countdown,
+    scaled_threat_damage,
+)
 from shellcromancer.units import UNIT_DEFINITIONS, UnitType
 
 
@@ -466,13 +471,16 @@ class ShellcromancerApp(App[None]):
         if self.state.is_dead:
             self.status_view.update(
                 "[red bold]Game Over[/]\n"
+                f"Run Time: {format_duration(self.state.run_elapsed_seconds)}\n"
                 + "\n".join(format_story_lines(self.state))
                 + "\nPress n to start a new run."
             )
             return
 
         self.status_view.update(
-            "[bold]Story[/]\n" + "\n".join(format_story_lines(self.state))
+            f"Run Time: {format_duration(self.state.run_elapsed_seconds)}\n"
+            "[bold]Story[/]\n"
+            + "\n".join(format_story_lines(self.state))
         )
 
 
@@ -628,6 +636,15 @@ def format_cooldown(seconds: float) -> str:
     return f"{minutes}:{seconds:02d}"
 
 
+def format_duration(seconds: float) -> str:
+    remaining = max(0, int(seconds))
+    hours, remainder = divmod(remaining, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
 def format_story_lines(state: GameState) -> list[str]:
     return [f"- {message}" for message in state.action_history[-3:]]
 
@@ -661,6 +678,7 @@ def render_state(state: GameState, selected_action_index: int = 0) -> str:
     return "\n".join(
         [
             "Rise of the Shellcromancer",
+            f"Run Time: {format_duration(state.run_elapsed_seconds)}",
             "",
             "Scribe Tab",
             *resource_lines,
@@ -724,7 +742,7 @@ def format_battle_lines(state: GameState) -> list[str]:
             f"- {definition.name}: {format_cooldown(active_threat.remaining_seconds)}"
         )
         lines.append(f"  {definition.description}")
-        lines.append(f"  Effect: {definition.effect_text}")
+        lines.append(f"  Effect: {format_threat_effect(definition, state)}")
     return lines
 
 
@@ -765,12 +783,24 @@ def format_encyclopedia_lines(state: GameState | None = None) -> list[str]:
 
     lines.extend(["", "Threats"])
     for definition in THREAT_DEFINITIONS.values():
+        countdown = definition.countdown_seconds
+        effect = definition.effect_text
+        if state is not None:
+            countdown = scaled_threat_countdown(definition, state)
+            effect = format_threat_effect(definition, state)
         lines.append(
             f"- {definition.name}: {definition.description} "
-            f"Countdown {format_cooldown(definition.countdown_seconds)}. "
-            f"{definition.effect_text}"
+            f"Countdown {format_cooldown(countdown)}. "
+            f"{effect}"
         )
     return lines
+
+
+def format_threat_effect(definition: ThreatDefinition, state: GameState) -> str:
+    damage = scaled_threat_damage(definition, state)
+    target_name = definition.target_building.value.replace("_", " ")
+    target_label = target_name if damage == 1 else f"{target_name}s"
+    return f"Destroys up to {damage} {target_label} when it resolves."
 
 
 def format_rate_map(values: dict[ResourceType, float]) -> str:
@@ -847,6 +877,7 @@ def render_game_over(state: GameState) -> str:
             "Rise of the Shellcromancer",
             "Game Over",
             "Food reached 0. The run has ended.",
+            f"Final Run Time: {format_duration(state.run_elapsed_seconds)}",
             "",
             "Final Stores",
             *resource_lines,
