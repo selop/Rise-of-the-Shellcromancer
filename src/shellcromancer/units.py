@@ -8,6 +8,7 @@ class UnitType(StrEnum):
     WORKER = "worker"
     SOLDIER = "soldier"
     LUMBERJACK = "lumberjack"
+    RANGER = "ranger"
     CAPTAIN = "captain"
     WATCHPOST = "watchpost"
     SORCERER = "sorcerer"
@@ -33,6 +34,9 @@ UNIT_DEFINITIONS: dict[UnitType, UnitDefinition] = {
         name="Lumberjack",
         upkeep={ResourceType.FOOD: 0.1},
         production={ResourceType.WOOD: 0.2},
+    ),
+    UnitType.RANGER: UnitDefinition(
+        name="Ranger",
     ),
     UnitType.CAPTAIN: UnitDefinition(
         name="Captain",

@@ -150,6 +150,26 @@ def test_reduce_cooldowns_decrements_without_going_below_zero() -> None:
     assert state.action_cooldowns[HUNT_ACTION_KEY] == pytest.approx(0.0)
 
 
+def test_tick_runs_automatic_hunt_when_ranger_and_requirements_are_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GameState()
+    state.units[UnitType.RANGER] = 1
+    state.units[UnitType.SOLDIER] = 1
+    calls = []
+
+    def fake_hunt(hunt_state: GameState) -> None:
+        calls.append(hunt_state)
+        hunt_state.last_action_message = "Automatic hunt ran."
+
+    monkeypatch.setattr("shellcromancer.economy.hunt", fake_hunt)
+
+    tick(state)
+
+    assert calls == [state]
+    assert state.last_action_message == "Automatic hunt ran."
+
+
 def test_tick_runs_automatic_patrol_when_captain_and_requirements_are_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -169,6 +189,43 @@ def test_tick_runs_automatic_patrol_when_captain_and_requirements_are_ready(
 
     assert calls == [state]
     assert state.last_action_message == "Automatic patrol ran."
+
+
+def test_tick_does_not_auto_hunt_without_hunt_prerequisites(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GameState()
+    state.units[UnitType.RANGER] = 1
+    calls = []
+
+    def fake_hunt(hunt_state: GameState) -> None:
+        calls.append(hunt_state)
+
+    monkeypatch.setattr("shellcromancer.economy.hunt", fake_hunt)
+
+    tick(state)
+
+    assert calls == []
+
+
+def test_tick_does_not_auto_hunt_until_cooldown_is_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GameState()
+    state.units[UnitType.RANGER] = 1
+    state.units[UnitType.SOLDIER] = 1
+    state.action_cooldowns[HUNT_ACTION_KEY] = 2.0
+    calls = []
+
+    def fake_hunt(hunt_state: GameState) -> None:
+        calls.append(hunt_state)
+
+    monkeypatch.setattr("shellcromancer.economy.hunt", fake_hunt)
+
+    tick(state)
+
+    assert calls == []
+    assert state.action_cooldowns[HUNT_ACTION_KEY] == pytest.approx(1.0)
 
 
 def test_tick_reduces_threat_roll_cooldown() -> None:

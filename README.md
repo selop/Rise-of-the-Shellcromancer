@@ -34,6 +34,7 @@ uv run python -m shellcromancer.app
 - `s`: open the Scribe tab
 - `r`: open the Reign tab
 - `b`: open the Battle tab
+- `l`: open the Logs tab
 - `e`: open the Encyclopedia tab
 - `up` / `down`: select a shop row within the current column
 - `left` / `right`: move between the unit, building, and action shop columns
@@ -44,9 +45,10 @@ uv run python -m shellcromancer.app
 The Scribe tab shows current stores, per-second changes, and separate owned
 unit and building lists. The Reign tab splits units, buildings, and actions into
 three columns. The Battle tab shows the next threat roll and current threat
-countdowns. The Encyclopedia tab lists current resources, units, buildings,
-actions, and threats from game data. Green entries are ready to buy or use,
-while blocked entries are red and cooldowns are yellow.
+countdowns. The Logs tab shows the last 25 action and event messages. The
+Encyclopedia tab lists current resources, units, buildings, actions, and threats
+from game data. Green entries are ready to buy or use, while blocked entries are
+red and cooldowns are yellow.
 
 Only the currently selected shop item shows its recipe or cost below the shop.
 
@@ -75,6 +77,7 @@ Per-second economy:
 - each worker: -0.1 food
 - each soldier: -0.2 food
 - each lumberjack: +0.2 wood, -0.1 food
+- rangers have no upkeep or production
 - captains have no upkeep or production
 - watchposts have no upkeep or production
 - sorcerers have no upkeep or production
@@ -89,19 +92,29 @@ One-time actions:
   gain 5 food, or gain 5 food and 5 shell.
 - Patrol: requires 3 soldiers, costs 10 food, has a 2 minute cooldown, and can
   lose soldiers, return peacefully, find gold, catch a shell fairy, rescue a
-  worker, or recover food and iron.
+  worker, stir up a new threat, or recover food and iron.
 - Expedition: requires 1 captain and 10 soldiers, costs 25 food and 5 gold, has
   a 5 minute cooldown, and can lose soldiers, recover large resource caches,
-  find a shell shrine, liberate workers, or recruit a captain.
+  find a shell shrine, liberate workers, stir up a new threat, or recruit a
+  captain.
 - Kindle the Pyre: requires 1 sorcerer and 1 arcane tower, costs 100 wood, has
   a 10 minute cooldown, and can leave only ash, reveal 10-50 shell, or yield
   5-10 gold.
 - Defend: requires 1 catapult and an active threat, has a 5 minute cooldown,
-  and stops the oldest active threat without consuming the catapult.
+  and has a 25-75% chance to stop the oldest active threat. Each catapult and
+  captain adds 10% success chance, capped at 75%. Any defense attempt has a
+  15% chance to break 1 catapult.
+
+Rangers:
+
+- Ranger: costs 1 soldier, 5 gold, and 10 shell.
+- While at least 1 ranger exists, hunts automatically depart whenever the hunt
+  cooldown and normal hunt prerequisites are ready.
+- Automated Hunt entries are labeled Hunt (A).
 
 Captains:
 
-- Captain: costs 1 worker and 10 gold.
+- Captain: costs 1 soldier and 10 gold.
 - While at least 1 captain exists, patrols automatically depart whenever the
   patrol cooldown and normal patrol prerequisites are ready.
 - Automated Patrol entries are labeled Patrol (A).
@@ -125,7 +138,12 @@ Threats:
 - Mine Saboteurs destroy up to 1 mine when their countdown reaches zero.
 - Quarry Raiders destroy up to 1 quarry when their countdown reaches zero.
 - Tower Arson destroys up to 1 arcane tower when its countdown reaches zero.
-- Defend removes the oldest active threat before it can resolve.
+- Defend can remove the oldest active threat before it can resolve.
+
+Story:
+
+- The Story panel shows the last 3 action and event messages.
+- The Logs tab shows the last 25 action and event messages.
 
 Resource values are clamped at zero. If food reaches zero, the player dies, the
 run ends, and the game opens to the saved game-over state until restarted.

@@ -1,10 +1,15 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from random import randint, random
 
 from shellcromancer.buildings import BuildingType
-from shellcromancer.game_state import GameState
+from shellcromancer.game_state import GameState, record_action_message
 from shellcromancer.resources import ResourceType
-from shellcromancer.threats import active_threat_name
+from shellcromancer.threats import (
+    ActiveThreat,
+    active_threat_name,
+    create_random_threat,
+)
 from shellcromancer.units import UnitType
 
 HUNT_ACTION_KEY = "hunt"
@@ -19,12 +24,19 @@ KINDLE_PYRE_ACTION_KEY = "kindle_the_pyre"
 KINDLE_PYRE_COOLDOWN_SECONDS = 600.0
 DEFEND_ACTION_KEY = "defend"
 DEFEND_COOLDOWN_SECONDS = 300.0
+DEFEND_BASE_SUCCESS_CHANCE = 0.25
+DEFEND_DEFENDER_SUCCESS_BONUS = 0.10
+DEFEND_MAX_SUCCESS_CHANCE = 0.75
+DEFEND_CATAPULT_BREAK_CHANCE = 0.15
 
 
 @dataclass(frozen=True)
 class ActionResult:
     success: bool
     message: str
+
+
+ThreatFactory = Callable[[], ActiveThreat]
 
 
 def _resource_name(resource: ResourceType) -> str:
@@ -46,8 +58,18 @@ def _spend(state: GameState, costs: dict[ResourceType, float]) -> None:
 
 
 def _finish(state: GameState, success: bool, message: str) -> ActionResult:
-    state.last_action_message = message
+    record_action_message(state, message)
     return ActionResult(success=success, message=message)
+
+
+def _add_action_threat(
+    state: GameState, threat_factory: ThreatFactory | None = None
+) -> str:
+    active_threat = (
+        create_random_threat() if threat_factory is None else threat_factory()
+    )
+    state.active_threats.append(active_threat)
+    return active_threat_name(active_threat)
 
 
 def create_worker(state: GameState) -> ActionResult:
@@ -149,22 +171,48 @@ def upgrade_worker_to_lumberjack(state: GameState) -> ActionResult:
     return _finish(state, True, "Upgraded worker to lumberjack.")
 
 
+def upgrade_soldier_to_ranger(state: GameState) -> ActionResult:
+    if state.units[UnitType.SOLDIER] < 1:
+        return _finish(state, False, "Need at least 1 soldier to create ranger.")
+
+    costs = {
+        ResourceType.GOLD: 5.0,
+        ResourceType.SHELL: 10.0,
+    }
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(
+            state, False, f"Not enough {_resource_name(missing)} to create ranger."
+        )
+
+    _spend(state, costs)
+    state.units[UnitType.SOLDIER] -= 1
+    state.units[UnitType.RANGER] += 1
+    return _finish(
+        state,
+        True,
+        "Created ranger from soldier. Hunts will now run whenever they are ready.",
+    )
+
+
 def promote_worker_to_captain(state: GameState) -> ActionResult:
-    if state.units[UnitType.WORKER] < 1:
-        return _finish(state, False, "Need at least 1 worker to promote captain.")
+    if state.units[UnitType.SOLDIER] < 1:
+        return _finish(state, False, "Need at least 1 soldier to promote captain.")
 
     costs = {ResourceType.GOLD: 10.0}
     can_afford, missing = _can_afford(state, costs)
     if not can_afford and missing is not None:
-        return _finish(state, False, f"Not enough {_resource_name(missing)} to promote captain.")
+        return _finish(
+            state, False, f"Not enough {_resource_name(missing)} to promote captain."
+        )
 
     _spend(state, costs)
-    state.units[UnitType.WORKER] -= 1
+    state.units[UnitType.SOLDIER] -= 1
     state.units[UnitType.CAPTAIN] += 1
     return _finish(
         state,
         True,
-        "Promoted a worker to captain. Patrols will now depart whenever they are ready.",
+        "Promoted a soldier to captain. Patrols will now depart whenever they are ready.",
     )
 
 
@@ -268,6 +316,7 @@ def patrol(
     gold_reward: int | None = None,
     food_reward: int | None = None,
     iron_reward: int | None = None,
+    threat_factory: ThreatFactory | None = None,
 ) -> ActionResult:
     cooldown = state.action_cooldowns.get(PATROL_ACTION_KEY, 0.0)
     if cooldown > 0:
@@ -292,7 +341,8 @@ def patrol(
         return _finish(
             state,
             True,
-            "Patrol result: The patrol was wiped out before anyone could return.",
+            "Patrol result: The patrol was wiped out beyond the thorn road; "
+            "the sentries found only broken spears at dawn.",
         )
 
     if outcome_roll < 0.10:
@@ -300,7 +350,8 @@ def patrol(
         return _finish(
             state,
             True,
-            "Patrol result: The patrol was ambushed. 2 soldiers died before the survivors escaped.",
+            "Patrol result: The patrol was ambushed in a black ravine. "
+            "2 soldiers died before the survivors escaped.",
         )
 
     if outcome_roll < 0.20:
@@ -308,14 +359,16 @@ def patrol(
         return _finish(
             state,
             True,
-            "Patrol result: The patrol fought through danger. 1 soldier died on the road.",
+            "Patrol result: The patrol fought through smoke and arrows. "
+            "1 soldier died on the road.",
         )
 
     if outcome_roll < 0.40:
         return _finish(
             state,
             True,
-            "Patrol result: The roads were quiet. The soldiers returned safely but found nothing useful.",
+            "Patrol result: The moonlit roads were quiet. "
+            "The soldiers returned safely but found nothing useful.",
         )
 
     if outcome_roll < 0.50:
@@ -324,8 +377,8 @@ def patrol(
         return _finish(
             state,
             True,
-            "Patrol result: The soldiers raided a bandit hideout "
-            f"and carried back {reward} gold.",
+            "Patrol result: The soldiers stormed a bandit hideout "
+            f"under the pines and carried back {reward} gold.",
         )
 
     if outcome_roll < 0.60:
@@ -333,7 +386,7 @@ def patrol(
         return _finish(
             state,
             True,
-            "Patrol result: Caught a shell fairy. "
+            "Patrol result: Caught a shell fairy in a lantern jar. "
             "Its glow now strengthens shell income by +0.1/s.",
         )
 
@@ -342,7 +395,17 @@ def patrol(
         return _finish(
             state,
             True,
-            "Patrol result: The soldiers saved a stranded worker from a wolf attack. Worker +1.",
+            "Patrol result: The soldiers saved a stranded worker from a wolf attack "
+            "near the old mile stones. Worker +1.",
+        )
+
+    if outcome_roll < 0.90:
+        threat_name = _add_action_threat(state, threat_factory)
+        return _finish(
+            state,
+            True,
+            "Patrol result: The scouts pushed too far and stirred trouble "
+            f"on the border. New threat: {threat_name}.",
         )
 
     food = randint(1, 10) if food_reward is None else food_reward
@@ -352,7 +415,7 @@ def patrol(
     return _finish(
         state,
         True,
-        "Patrol result: Found an abandoned merchant cart. "
+        "Patrol result: Found an abandoned merchant cart half-buried in the ditch. "
         f"The soldiers recovered {food} food and {iron} iron.",
     )
 
@@ -366,6 +429,7 @@ def expedition(
     wood_reward: int | None = None,
     shell_reward: int | None = None,
     stone_reward: int | None = None,
+    threat_factory: ThreatFactory | None = None,
 ) -> ActionResult:
     cooldown = state.action_cooldowns.get(EXPEDITION_ACTION_KEY, 0.0)
     if cooldown > 0:
@@ -414,7 +478,8 @@ def expedition(
         return _finish(
             state,
             True,
-            "Expedition result: The survivors dragged home a battered cache, "
+            "Expedition result: The survivors dragged home a battered cache "
+            "through rain and ruin, "
             f"losing 3 soldiers but recovering {iron} iron and {gold} gold.",
         )
 
@@ -427,7 +492,7 @@ def expedition(
             state,
             True,
             "Expedition result: An ancient armory opened under the captain's "
-            f"seal, yielding {iron} iron and {gold} gold.",
+            f"seal, its racks still sharp with {iron} iron and {gold} gold.",
         )
 
     if outcome_roll < 0.40:
@@ -439,6 +504,7 @@ def expedition(
             state,
             True,
             "Expedition result: A forgotten granary was found above old roots, "
+            "its doors sealed against centuries of hunger, "
             f"adding {food} food and {wood} wood.",
         )
 
@@ -449,7 +515,8 @@ def expedition(
         return _finish(
             state,
             True,
-            "Expedition result: The soldiers mapped a shell shrine, "
+            "Expedition result: The soldiers mapped a shell shrine humming beneath "
+            "cold blue moss, "
             f"gaining {shell} shell and +0.2/s shell income.",
         )
 
@@ -458,7 +525,8 @@ def expedition(
         return _finish(
             state,
             True,
-            "Expedition result: The captain liberated a hidden settlement. "
+            "Expedition result: The captain liberated a hidden settlement "
+            "from its barricaded valley. "
             "Worker +2.",
         )
 
@@ -472,8 +540,18 @@ def expedition(
         return _finish(
             state,
             True,
-            "Expedition result: Battlefield salvage filled the wagons with "
+            "Expedition result: Battlefield salvage from a forgotten siege "
+            "filled the wagons with "
             f"{stone} stone, {iron} iron, and {gold} gold.",
+        )
+
+    if outcome_roll < 0.97:
+        threat_name = _add_action_threat(state, threat_factory)
+        return _finish(
+            state,
+            True,
+            "Expedition result: The column crossed a cursed marker and drew "
+            f"hostile eyes homeward. New threat: {threat_name}.",
         )
 
     shell = randint(50, 100) if shell_reward is None else shell_reward
@@ -549,7 +627,22 @@ def kindle_the_pyre(
     )
 
 
-def defend(state: GameState) -> ActionResult:
+def defend_success_chance(state: GameState) -> float:
+    defender_count = (
+        state.buildings[BuildingType.CATAPULT] + state.units[UnitType.CAPTAIN]
+    )
+    return min(
+        DEFEND_MAX_SUCCESS_CHANCE,
+        DEFEND_BASE_SUCCESS_CHANCE
+        + DEFEND_DEFENDER_SUCCESS_BONUS * defender_count,
+    )
+
+
+def defend(
+    state: GameState,
+    roll: float | None = None,
+    break_roll: float | None = None,
+) -> ActionResult:
     cooldown = state.action_cooldowns.get(DEFEND_ACTION_KEY, 0.0)
     if cooldown > 0:
         return _finish(
@@ -562,11 +655,30 @@ def defend(state: GameState) -> ActionResult:
     if not state.active_threats:
         return _finish(state, False, "No active threats to defend against.")
 
-    stopped_threat = state.active_threats.pop(0)
-    threat_name = active_threat_name(stopped_threat)
+    target_threat = state.active_threats[0]
+    threat_name = active_threat_name(target_threat)
+    chance = defend_success_chance(state)
+    outcome_roll = random() if roll is None else roll
+    catapult_break_roll = random() if break_roll is None else break_roll
     state.action_cooldowns[DEFEND_ACTION_KEY] = DEFEND_COOLDOWN_SECONDS
+    catapult_broke = catapult_break_roll < DEFEND_CATAPULT_BREAK_CHANCE
+    break_message = ""
+    if catapult_broke:
+        state.buildings[BuildingType.CATAPULT] -= 1
+        break_message = " One catapult cracked apart in the recoil."
+
+    if outcome_roll >= chance:
+        return _finish(
+            state,
+            True,
+            f"Defended against {threat_name}, but the defense failed "
+            f"({chance:.0%} chance).{break_message}",
+        )
+
+    state.active_threats.pop(0)
     return _finish(
         state,
         True,
-        f"Defended against {threat_name}. The threat has been stopped.",
+        f"Defended against {threat_name}. The threat has been stopped "
+        f"({chance:.0%} chance).{break_message}",
     )

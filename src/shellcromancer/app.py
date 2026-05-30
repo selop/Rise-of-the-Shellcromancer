@@ -66,10 +66,17 @@ UNIT_ACTIONS = (
         run=actions.upgrade_worker_to_lumberjack,
     ),
     MenuAction(
+        label="Ranger",
+        cost="1 soldier, 5 gold, 10 shell",
+        resource_costs={ResourceType.GOLD: 5.0, ResourceType.SHELL: 10.0},
+        unit_costs={UnitType.SOLDIER: 1},
+        run=actions.upgrade_soldier_to_ranger,
+    ),
+    MenuAction(
         label="Captain",
-        cost="1 worker, 10 gold",
+        cost="1 soldier, 10 gold",
         resource_costs={ResourceType.GOLD: 10.0},
-        unit_costs={UnitType.WORKER: 1},
+        unit_costs={UnitType.SOLDIER: 1},
         run=actions.promote_worker_to_captain,
     ),
     MenuAction(
@@ -187,8 +194,8 @@ ONE_TIME_ACTIONS = (
     MenuAction(
         label="Defend",
         cost=(
-            "Requires 1 catapult and an active threat. Stops the oldest threat "
-            "with a 5 minute cooldown."
+            "Requires 1 catapult and an active threat. 25-75% chance based on "
+            "catapults and captains, with a 5 minute cooldown."
         ),
         resource_costs={},
         unit_costs={},
@@ -235,7 +242,7 @@ class ShellcromancerApp(App[None]):
         height: auto;
     }
 
-    #shop-view, #battle-view, #encyclopedia-view {
+    #shop-view, #battle-view, #logs-view, #encyclopedia-view {
         padding: 1;
         height: auto;
         border: solid $surface-lighten-1;
@@ -269,11 +276,12 @@ class ShellcromancerApp(App[None]):
         Binding("up,k", "select_previous", "Previous row", priority=True),
         Binding("down,j", "select_next", "Next row", priority=True),
         Binding("left,h", "select_left", "Previous column", priority=True),
-        Binding("right,l", "select_right", "Next column", priority=True),
+        Binding("right", "select_right", "Next column", priority=True),
         Binding("enter", "execute_selected", "Use selected", priority=True),
         Binding("s", "show_scribe", "Scribe"),
         Binding("r", "show_reign", "Reign"),
         Binding("b", "show_battle", "Battle"),
+        Binding("l", "show_logs", "Logs"),
         Binding("e", "show_encyclopedia", "Encyclopedia"),
         Binding("n", "reset", "New game after death"),
         Binding("q", "quit", "Quit"),
@@ -297,6 +305,7 @@ class ShellcromancerApp(App[None]):
         self.shop_view = Static(id="shop-view")
         self.selected_view = Static(id="selected")
         self.battle_view = Static(id="battle-view")
+        self.logs_view = Static(id="logs-view")
         self.encyclopedia_view = Static(id="encyclopedia-view")
         self.status_view = Static(id="status")
         self.tables_ready = False
@@ -319,6 +328,8 @@ class ShellcromancerApp(App[None]):
                 yield self.selected_view
             with TabPane("Battle", id="battle-tab"):
                 yield self.battle_view
+            with TabPane("Logs", id="logs-tab"):
+                yield self.logs_view
             with TabPane("Encyclopedia", id="encyclopedia-tab"):
                 yield self.encyclopedia_view
         yield self.status_view
@@ -379,6 +390,9 @@ class ShellcromancerApp(App[None]):
     def action_show_battle(self) -> None:
         self.query_one(TabbedContent).active = "battle-tab"
 
+    def action_show_logs(self) -> None:
+        self.query_one(TabbedContent).active = "logs-tab"
+
     def action_show_encyclopedia(self) -> None:
         self.query_one(TabbedContent).active = "encyclopedia-tab"
 
@@ -400,6 +414,7 @@ class ShellcromancerApp(App[None]):
         self._refresh_shop_view()
         self._refresh_selected_view()
         self._refresh_battle_view()
+        self._refresh_logs_view()
         self._refresh_encyclopedia_view()
         self._refresh_status_view()
 
@@ -441,18 +456,23 @@ class ShellcromancerApp(App[None]):
     def _refresh_battle_view(self) -> None:
         self.battle_view.update(format_battle_text(self.state))
 
+    def _refresh_logs_view(self) -> None:
+        self.logs_view.update(format_logs_text(self.state))
+
     def _refresh_encyclopedia_view(self) -> None:
         self.encyclopedia_view.update(format_encyclopedia_text(self.state))
 
     def _refresh_status_view(self) -> None:
         if self.state.is_dead:
             self.status_view.update(
-                f"[red bold]Game Over[/]\n{self.state.last_action_message}\nPress n to start a new run."
+                "[red bold]Game Over[/]\n"
+                + "\n".join(format_story_lines(self.state))
+                + "\nPress n to start a new run."
             )
             return
 
         self.status_view.update(
-            f"[bold]Story[/]\nLast action: {self.state.last_action_message}"
+            "[bold]Story[/]\n" + "\n".join(format_story_lines(self.state))
         )
 
 
@@ -516,6 +536,8 @@ def action_status_label(state: GameState, menu_action: MenuAction) -> str:
 
 
 def action_display_label(state: GameState, menu_action: MenuAction) -> str:
+    if menu_action.label == "Hunt" and state.units[UnitType.RANGER] >= 1:
+        return "Hunt (A)"
     if menu_action.label == "Patrol" and state.units[UnitType.CAPTAIN] >= 1:
         return "Patrol (A)"
     if menu_action.label == "Defend" and state.units[UnitType.WATCHPOST] >= 1:
@@ -559,6 +581,8 @@ def format_action_requirements(menu_action: MenuAction) -> str:
         requirements.append("cooldown ready")
     if menu_action.requires_active_threat:
         requirements.append("active threat")
+    if menu_action.label == "Defend":
+        requirements.append("25-75% success chance")
 
     if not requirements:
         return "-"
@@ -602,6 +626,14 @@ def format_cooldown(seconds: float) -> str:
     remaining = max(0, int(seconds))
     minutes, seconds = divmod(remaining, 60)
     return f"{minutes}:{seconds:02d}"
+
+
+def format_story_lines(state: GameState) -> list[str]:
+    return [f"- {message}" for message in state.action_history[-3:]]
+
+
+def format_log_lines(state: GameState) -> list[str]:
+    return [f"- {message}" for message in state.action_history[-25:]]
 
 
 def render_state(state: GameState, selected_action_index: int = 0) -> str:
@@ -650,16 +682,24 @@ def render_state(state: GameState, selected_action_index: int = 0) -> str:
             "Battle Tab",
             *format_battle_lines(state),
             "",
+            "Logs Tab",
+            *format_log_lines(state),
+            "",
             "Encyclopedia Tab",
             *format_encyclopedia_lines(state),
             "",
-            f"Last action: {state.last_action_message}",
+            "Story",
+            *format_story_lines(state),
         ]
     )
 
 
 def format_battle_text(state: GameState) -> str:
     return "\n".join(format_battle_lines(state))
+
+
+def format_logs_text(state: GameState) -> str:
+    return "[bold]Logs[/]\n" + "\n".join(format_log_lines(state))
 
 
 def format_battle_lines(state: GameState) -> list[str]:
@@ -811,7 +851,8 @@ def render_game_over(state: GameState) -> str:
             "Final Stores",
             *resource_lines,
             "",
-            state.last_action_message,
+            "Story",
+            *format_story_lines(state),
             "",
             "Press n to start a new run. Press q to quit.",
         ]

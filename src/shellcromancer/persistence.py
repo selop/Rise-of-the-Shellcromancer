@@ -4,7 +4,11 @@ from pathlib import Path
 from typing import TypeVar
 
 from shellcromancer.buildings import BuildingType
-from shellcromancer.game_state import GameState
+from shellcromancer.game_state import (
+    ACTION_HISTORY_LIMIT,
+    GameState,
+    record_action_message,
+)
 from shellcromancer.resources import ResourceType
 from shellcromancer.threats import THREAT_DEFINITIONS, THREAT_ROLL_SECONDS, ActiveThreat
 from shellcromancer.units import UnitType
@@ -45,6 +49,7 @@ def state_to_dict(state: GameState) -> dict[str, object]:
             resource.value: amount for resource, amount in state.last_delta.items()
         },
         "last_action_message": state.last_action_message,
+        "action_history": state.action_history[-ACTION_HISTORY_LIMIT:],
         "shell_fairy_bonus": state.shell_fairy_bonus,
         "is_dead": state.is_dead,
     }
@@ -75,9 +80,18 @@ def state_from_dict(data: dict[str, object]) -> GameState:
         ),
     )
 
+    raw_action_history = data.get("action_history")
+    has_action_history = _is_string_list(raw_action_history) and bool(
+        raw_action_history
+    )
+    if has_action_history:
+        state.action_history = raw_action_history[-ACTION_HISTORY_LIMIT:]
+        state.last_action_message = state.action_history[-1]
+
     last_action_message = data.get("last_action_message")
-    if isinstance(last_action_message, str):
+    if isinstance(last_action_message, str) and not has_action_history:
         state.last_action_message = last_action_message
+        state.action_history = [last_action_message]
 
     state.shell_fairy_bonus = _float_or_default(
         data.get("shell_fairy_bonus"), default_state.shell_fairy_bonus
@@ -97,7 +111,7 @@ def load_state(path: Path | None = None) -> GameState:
         return state_from_dict(data)
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         state = GameState()
-        state.last_action_message = SAVE_LOAD_FAILURE_MESSAGE
+        record_action_message(state, SAVE_LOAD_FAILURE_MESSAGE)
         return state
 
 
@@ -136,6 +150,12 @@ def _enum_int_mapping(
         if key.value in raw_value:
             values[key] = _int_or_default(raw_value[key.value], values[key])
     return values
+
+
+def _is_string_list(raw_value: object) -> bool:
+    return isinstance(raw_value, list) and all(
+        isinstance(item, str) for item in raw_value
+    )
 
 
 def _string_float_mapping(

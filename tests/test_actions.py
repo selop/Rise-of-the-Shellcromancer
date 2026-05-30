@@ -24,6 +24,7 @@ from shellcromancer.actions import (
     promote_worker_to_captain,
     upgrade_worker_to_lumberjack,
     upgrade_worker_to_soldier,
+    upgrade_soldier_to_ranger,
     upgrade_soldier_to_sorcerer,
 )
 from shellcromancer.buildings import BuildingType
@@ -185,15 +186,71 @@ def test_upgrade_worker_to_lumberjack_consumes_worker_wood_and_shell() -> None:
     assert state.resources[ResourceType.SHELL] == 8.0
 
 
-def test_promote_worker_to_captain_consumes_worker_and_gold() -> None:
+def test_upgrade_soldier_to_ranger_consumes_soldier_gold_and_shell() -> None:
     state = GameState()
-    state.units[UnitType.WORKER] = 1
+    state.units[UnitType.SOLDIER] = 1
+    state.resources[ResourceType.GOLD] = 5.0
+    state.resources[ResourceType.SHELL] = 10.0
+
+    result = upgrade_soldier_to_ranger(state)
+
+    assert result.success is True
+    assert state.units[UnitType.SOLDIER] == 0
+    assert state.units[UnitType.RANGER] == 1
+    assert state.resources[ResourceType.GOLD] == 0.0
+    assert state.resources[ResourceType.SHELL] == 0.0
+    assert "Hunts will now run" in result.message
+
+
+def test_cannot_create_ranger_without_soldier() -> None:
+    state = GameState()
+    state.resources[ResourceType.GOLD] = 5.0
+    state.resources[ResourceType.SHELL] = 10.0
+
+    result = upgrade_soldier_to_ranger(state)
+
+    assert result.success is False
+    assert result.message == "Need at least 1 soldier to create ranger."
+    assert state.units[UnitType.RANGER] == 0
+
+
+def test_cannot_create_ranger_without_gold() -> None:
+    state = GameState()
+    state.units[UnitType.SOLDIER] = 1
+    state.resources[ResourceType.GOLD] = 4.9
+    state.resources[ResourceType.SHELL] = 10.0
+
+    result = upgrade_soldier_to_ranger(state)
+
+    assert result.success is False
+    assert result.message == "Not enough gold to create ranger."
+    assert state.units[UnitType.SOLDIER] == 1
+    assert state.units[UnitType.RANGER] == 0
+
+
+def test_cannot_create_ranger_without_shell() -> None:
+    state = GameState()
+    state.units[UnitType.SOLDIER] = 1
+    state.resources[ResourceType.GOLD] = 5.0
+    state.resources[ResourceType.SHELL] = 9.9
+
+    result = upgrade_soldier_to_ranger(state)
+
+    assert result.success is False
+    assert result.message == "Not enough shell to create ranger."
+    assert state.units[UnitType.SOLDIER] == 1
+    assert state.units[UnitType.RANGER] == 0
+
+
+def test_promote_worker_to_captain_consumes_soldier_and_gold() -> None:
+    state = GameState()
+    state.units[UnitType.SOLDIER] = 1
     state.resources[ResourceType.GOLD] = 10.0
 
     result = promote_worker_to_captain(state)
 
     assert result.success is True
-    assert state.units[UnitType.WORKER] == 0
+    assert state.units[UnitType.SOLDIER] == 0
     assert state.units[UnitType.CAPTAIN] == 1
     assert state.resources[ResourceType.GOLD] == 0.0
     assert "Patrols will now depart" in result.message
@@ -237,27 +294,27 @@ def test_cannot_create_watchpost_without_wood() -> None:
     assert state.units[UnitType.WATCHPOST] == 0
 
 
-def test_cannot_promote_captain_without_worker() -> None:
+def test_cannot_promote_captain_without_soldier() -> None:
     state = GameState()
     state.resources[ResourceType.GOLD] = 10.0
 
     result = promote_worker_to_captain(state)
 
     assert result.success is False
-    assert result.message == "Need at least 1 worker to promote captain."
+    assert result.message == "Need at least 1 soldier to promote captain."
     assert state.units[UnitType.CAPTAIN] == 0
 
 
 def test_cannot_promote_captain_without_gold() -> None:
     state = GameState()
-    state.units[UnitType.WORKER] = 1
+    state.units[UnitType.SOLDIER] = 1
     state.resources[ResourceType.GOLD] = 9.9
 
     result = promote_worker_to_captain(state)
 
     assert result.success is False
     assert result.message == "Not enough gold to promote captain."
-    assert state.units[UnitType.WORKER] == 1
+    assert state.units[UnitType.SOLDIER] == 1
     assert state.units[UnitType.CAPTAIN] == 0
 
 
@@ -504,6 +561,26 @@ def test_patrol_can_gain_worker() -> None:
     assert "%" not in result.message
 
 
+def test_patrol_can_add_threat() -> None:
+    state = patrol_ready_state()
+
+    result = patrol(
+        state,
+        roll=0.85,
+        threat_factory=lambda: ActiveThreat(
+            key="goblin_raid", remaining_seconds=300.0
+        ),
+    )
+
+    assert result.success is True
+    assert state.resources[ResourceType.FOOD] == 0.0
+    assert state.action_cooldowns[PATROL_ACTION_KEY] == PATROL_COOLDOWN_SECONDS
+    assert state.active_threats == [
+        ActiveThreat(key="goblin_raid", remaining_seconds=300.0)
+    ]
+    assert "New threat: Goblin Raid" in result.message
+
+
 def test_patrol_can_find_merchant_cart() -> None:
     state = patrol_ready_state()
 
@@ -669,10 +746,34 @@ def test_expedition_can_salvage_battlefield() -> None:
     assert "%" not in result.message
 
 
+def test_expedition_can_add_threat() -> None:
+    state = expedition_ready_state()
+
+    result = expedition(
+        state,
+        roll=0.90,
+        threat_factory=lambda: ActiveThreat(
+            key="mine_saboteurs", remaining_seconds=300.0
+        ),
+    )
+
+    assert result.success is True
+    assert state.resources[ResourceType.FOOD] == 0.0
+    assert state.resources[ResourceType.GOLD] == 0.0
+    assert (
+        state.action_cooldowns[EXPEDITION_ACTION_KEY]
+        == EXPEDITION_COOLDOWN_SECONDS
+    )
+    assert state.active_threats == [
+        ActiveThreat(key="mine_saboteurs", remaining_seconds=300.0)
+    ]
+    assert "New threat: Mine Saboteurs" in result.message
+
+
 def test_expedition_can_recruit_captain() -> None:
     state = expedition_ready_state()
 
-    result = expedition(state, roll=0.90, shell_reward=71)
+    result = expedition(state, roll=0.98, shell_reward=71)
 
     assert result.success is True
     assert state.units[UnitType.CAPTAIN] == 2
@@ -826,7 +927,7 @@ def test_defend_cannot_run_while_on_cooldown() -> None:
     ]
 
 
-def test_defend_stops_oldest_threat_and_keeps_catapult() -> None:
+def test_defend_success_stops_oldest_threat_and_keeps_catapult() -> None:
     state = GameState()
     state.buildings[BuildingType.CATAPULT] = 1
     state.active_threats = [
@@ -834,12 +935,77 @@ def test_defend_stops_oldest_threat_and_keeps_catapult() -> None:
         ActiveThreat(key="mine_saboteurs", remaining_seconds=30.0),
     ]
 
-    result = defend(state)
+    result = defend(state, roll=0.34, break_roll=0.99)
 
     assert result.success is True
-    assert result.message == "Defended against Goblin Raid. The threat has been stopped."
+    assert (
+        result.message
+        == "Defended against Goblin Raid. The threat has been stopped (35% chance)."
+    )
     assert state.buildings[BuildingType.CATAPULT] == 1
     assert state.action_cooldowns[DEFEND_ACTION_KEY] == DEFEND_COOLDOWN_SECONDS
     assert [active_threat.key for active_threat in state.active_threats] == [
         "mine_saboteurs"
     ]
+
+
+def test_defend_failure_keeps_threat_and_starts_cooldown() -> None:
+    state = GameState()
+    state.buildings[BuildingType.CATAPULT] = 1
+    state.active_threats = [ActiveThreat(key="goblin_raid", remaining_seconds=12.0)]
+
+    result = defend(state, roll=0.35, break_roll=0.99)
+
+    assert result.success is True
+    assert (
+        result.message
+        == "Defended against Goblin Raid, but the defense failed (35% chance)."
+    )
+    assert state.action_cooldowns[DEFEND_ACTION_KEY] == DEFEND_COOLDOWN_SECONDS
+    assert [active_threat.key for active_threat in state.active_threats] == [
+        "goblin_raid"
+    ]
+
+
+def test_defend_success_chance_caps_at_seventy_five_percent() -> None:
+    state = GameState()
+    state.buildings[BuildingType.CATAPULT] = 4
+    state.units[UnitType.CAPTAIN] = 2
+    state.active_threats = [ActiveThreat(key="goblin_raid", remaining_seconds=12.0)]
+
+    result = defend(state, roll=0.74, break_roll=0.99)
+
+    assert result.success is True
+    assert (
+        result.message
+        == "Defended against Goblin Raid. The threat has been stopped (75% chance)."
+    )
+    assert state.active_threats == []
+
+
+def test_defend_success_can_break_catapult() -> None:
+    state = GameState()
+    state.buildings[BuildingType.CATAPULT] = 1
+    state.active_threats = [ActiveThreat(key="goblin_raid", remaining_seconds=12.0)]
+
+    result = defend(state, roll=0.10, break_roll=0.01)
+
+    assert result.success is True
+    assert state.buildings[BuildingType.CATAPULT] == 0
+    assert state.active_threats == []
+    assert "One catapult cracked apart" in result.message
+
+
+def test_defend_failure_can_break_catapult() -> None:
+    state = GameState()
+    state.buildings[BuildingType.CATAPULT] = 1
+    state.active_threats = [ActiveThreat(key="goblin_raid", remaining_seconds=12.0)]
+
+    result = defend(state, roll=0.90, break_roll=0.01)
+
+    assert result.success is True
+    assert state.buildings[BuildingType.CATAPULT] == 0
+    assert state.active_threats == [
+        ActiveThreat(key="goblin_raid", remaining_seconds=12.0)
+    ]
+    assert "One catapult cracked apart" in result.message

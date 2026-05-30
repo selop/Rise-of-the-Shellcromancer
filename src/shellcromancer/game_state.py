@@ -5,6 +5,9 @@ from shellcromancer.resources import ALL_RESOURCES, ResourceType
 from shellcromancer.threats import THREAT_ROLL_SECONDS, ActiveThreat
 from shellcromancer.units import ALL_UNITS, UnitType
 
+ACTION_HISTORY_LIMIT = 25
+WELCOME_MESSAGE = "Welcome, Shellcromancer."
+
 
 def initial_resources() -> dict[ResourceType, float]:
     return {
@@ -35,6 +38,10 @@ def empty_action_cooldowns() -> dict[str, float]:
     }
 
 
+def initial_action_history() -> list[str]:
+    return [WELCOME_MESSAGE]
+
+
 @dataclass
 class GameState:
     resources: dict[ResourceType, float] = field(default_factory=initial_resources)
@@ -44,6 +51,13 @@ class GameState:
     active_threats: list[ActiveThreat] = field(default_factory=list)
     threat_roll_cooldown: float = THREAT_ROLL_SECONDS
     last_delta: dict[ResourceType, float] = field(default_factory=empty_delta)
-    last_action_message: str = "Welcome, Shellcromancer."
+    last_action_message: str = WELCOME_MESSAGE
+    action_history: list[str] = field(default_factory=initial_action_history)
     shell_fairy_bonus: float = 0.0
     is_dead: bool = False
+
+
+def record_action_message(state: GameState, message: str) -> None:
+    state.last_action_message = message
+    state.action_history.append(message)
+    state.action_history = state.action_history[-ACTION_HISTORY_LIMIT:]

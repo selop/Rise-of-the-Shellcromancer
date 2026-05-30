@@ -1,6 +1,13 @@
 from shellcromancer.buildings import BUILDING_DEFINITIONS, BuildingType
-from shellcromancer.actions import DEFEND_ACTION_KEY, PATROL_ACTION_KEY, defend, patrol
-from shellcromancer.game_state import GameState, empty_delta
+from shellcromancer.actions import (
+    DEFEND_ACTION_KEY,
+    HUNT_ACTION_KEY,
+    PATROL_ACTION_KEY,
+    defend,
+    hunt,
+    patrol,
+)
+from shellcromancer.game_state import GameState, empty_delta, record_action_message
 from shellcromancer.resources import ResourceType
 from shellcromancer.threats import (
     THREAT_ROLL_SECONDS,
@@ -59,12 +66,23 @@ def mark_dead_if_food_depleted(state: GameState) -> None:
         return
 
     state.is_dead = True
-    state.last_action_message = DEATH_MESSAGE
+    record_action_message(state, DEATH_MESSAGE)
 
 
 def reduce_cooldowns(state: GameState, elapsed_seconds: float = 1.0) -> None:
     for action_key, remaining in state.action_cooldowns.items():
         state.action_cooldowns[action_key] = max(0.0, remaining - elapsed_seconds)
+
+
+def run_automatic_hunt(state: GameState) -> None:
+    if state.units[UnitType.RANGER] < 1:
+        return
+    if state.action_cooldowns.get(HUNT_ACTION_KEY, 0.0) > 0:
+        return
+    if state.units[UnitType.SOLDIER] < 1:
+        return
+
+    hunt(state)
 
 
 def run_automatic_patrol(state: GameState) -> None:
@@ -106,21 +124,21 @@ def update_threats(state: GameState, elapsed_seconds: float = 1.0) -> None:
             remaining_threats.append(active_threat)
     state.active_threats = remaining_threats
 
-    if expired_messages:
-        state.last_action_message = " ".join(expired_messages)
-
     state.threat_roll_cooldown = max(
         0.0, state.threat_roll_cooldown - elapsed_seconds
     )
+    new_threat_message = ""
     if state.threat_roll_cooldown <= 0:
         active_threat = create_random_threat()
         state.active_threats.append(active_threat)
         state.threat_roll_cooldown = THREAT_ROLL_SECONDS
         new_threat_message = f"New threat: {active_threat_name(active_threat)}."
-        if expired_messages:
-            state.last_action_message = f"{state.last_action_message} {new_threat_message}"
-        else:
-            state.last_action_message = new_threat_message
+
+    messages = [*expired_messages]
+    if new_threat_message:
+        messages.append(new_threat_message)
+    if messages:
+        record_action_message(state, " ".join(messages))
 
 
 def tick(state: GameState) -> None:
@@ -133,6 +151,7 @@ def tick(state: GameState) -> None:
         return
 
     reduce_cooldowns(state)
+    run_automatic_hunt(state)
     run_automatic_patrol(state)
     run_automatic_defend(state)
     update_threats(state)

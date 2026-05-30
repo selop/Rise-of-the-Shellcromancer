@@ -19,7 +19,7 @@ from shellcromancer.app import (
     render_state,
 )
 from shellcromancer.buildings import BuildingType
-from shellcromancer.game_state import GameState
+from shellcromancer.game_state import GameState, record_action_message
 from shellcromancer.resources import ResourceType
 from shellcromancer.threats import ActiveThreat
 from shellcromancer.units import UnitType
@@ -33,6 +33,7 @@ def test_render_state_snapshot_only_shows_implemented_features() -> None:
     assert "Battle Tab" in rendered
     assert "Next threat roll: 10:00" in rendered
     assert "No active threats." in rendered
+    assert "Logs Tab" in rendered
     assert "Encyclopedia Tab" in rendered
     assert "Resources Tab" not in rendered
     assert "Shop Tab" not in rendered
@@ -54,6 +55,7 @@ def test_render_state_lists_units_buildings_and_actions() -> None:
     assert "Hunt" in rendered
     assert "Patrol" in rendered
     assert "Expedition" in rendered
+    assert "Ranger" in rendered
     assert "Captain" in rendered
     assert "Watchpost" in rendered
     assert "Sorcerer" in rendered
@@ -71,6 +73,7 @@ def test_menu_includes_new_units_buildings_and_actions() -> None:
     assert "Hunt" in labels
     assert "Patrol" in labels
     assert "Expedition" in labels
+    assert "Ranger" in labels
     assert "Captain" in labels
     assert "Watchpost" in labels
     assert "Sorcerer" in labels
@@ -134,6 +137,7 @@ def test_app_frames_major_panels() -> None:
     assert "#resource-table, #unit-table, #building-table" in css
     assert "#shop-view" in css
     assert "#battle-view" in css
+    assert "#logs-view" in css
     assert "#encyclopedia-view" in css
     assert "#selected" in css
     assert "#status" in css
@@ -143,18 +147,50 @@ def test_app_frames_major_panels() -> None:
     assert "min-height: 6;" in css
 
 
-def test_status_panel_shows_story_and_last_action(tmp_path) -> None:
+def test_status_panel_shows_story_and_last_three_actions(tmp_path) -> None:
     async def run_app() -> None:
         app = ShellcromancerApp(save_path=tmp_path / "save.json")
         async with app.run_test() as pilot:
             await pilot.pause()
 
-            app.state.last_action_message = "A patrol returned with gold."
+            record_action_message(app.state, "A patrol returned with gold.")
+            record_action_message(app.state, "A ranger found a trail.")
+            record_action_message(app.state, "A defense held.")
             app._refresh_view()
 
             status = app.query_one("#status", Static)
-            assert "Story" in str(status.content)
-            assert "Last action: A patrol returned with gold." in str(status.content)
+            content = str(status.content)
+            assert "Story" in content
+            assert "A patrol returned with gold." in content
+            assert "A ranger found a trail." in content
+            assert "A defense held." in content
+            assert "Welcome, Shellcromancer." not in content
+
+    asyncio.run(run_app())
+
+
+def test_logs_tab_shows_last_twenty_five_actions(tmp_path) -> None:
+    async def run_app() -> None:
+        app = ShellcromancerApp(save_path=tmp_path / "save.json")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            for index in range(30):
+                record_action_message(app.state, f"Log entry {index}.")
+            app._refresh_view()
+
+            logs = app.query_one("#logs-view", Static)
+            content = str(logs.content)
+            assert "Logs" in content
+            assert "Log entry 5." in content
+            assert "Log entry 29." in content
+            assert "Log entry 4." not in content
+
+            status = app.query_one("#status", Static)
+            story = str(status.content)
+            assert "Log entry 27." in story
+            assert "Log entry 29." in story
+            assert "Log entry 26." not in story
 
     asyncio.run(run_app())
 
@@ -166,7 +202,7 @@ def test_status_panel_shows_game_over_story(tmp_path) -> None:
             await pilot.pause()
 
             app.state.is_dead = True
-            app.state.last_action_message = "The stores are empty."
+            record_action_message(app.state, "The stores are empty.")
             app._refresh_view()
 
             status = app.query_one("#status", Static)
@@ -177,7 +213,7 @@ def test_status_panel_shows_game_over_story(tmp_path) -> None:
     asyncio.run(run_app())
 
 
-def test_scribe_reign_and_battle_tab_shortcuts(tmp_path) -> None:
+def test_scribe_reign_battle_logs_and_encyclopedia_tab_shortcuts(tmp_path) -> None:
     async def run_app() -> None:
         app = ShellcromancerApp(save_path=tmp_path / "save.json")
         async with app.run_test() as pilot:
@@ -191,6 +227,10 @@ def test_scribe_reign_and_battle_tab_shortcuts(tmp_path) -> None:
             await pilot.press("b")
             await pilot.pause()
             assert tabs.active == "battle-tab"
+
+            await pilot.press("l")
+            await pilot.pause()
+            assert tabs.active == "logs-tab"
 
             await pilot.press("e")
             await pilot.pause()
@@ -238,6 +278,9 @@ def test_render_state_only_shows_selected_recipe() -> None:
 
 def test_render_state_splits_resource_costs_from_requirements() -> None:
     farm_rendered = render_state(GameState(), selected_action_index=action_index(1, 0))
+    captain_rendered = render_state(
+        GameState(), selected_action_index=action_index(0, 4)
+    )
     patrol_rendered = render_state(
         GameState(), selected_action_index=action_index(2, 1)
     )
@@ -252,6 +295,9 @@ def test_render_state_splits_resource_costs_from_requirements() -> None:
     assert "Requirements: 1 worker" in farm_rendered
     assert "Cost: 10 wood, 10 stone, 2 iron, 1 worker" not in farm_rendered
 
+    assert "Cost: 10 gold" in captain_rendered
+    assert "Requirements: 1 soldier" in captain_rendered
+
     assert "Cost: 10 food" in patrol_rendered
     assert "Requirements: 3 soldiers, cooldown ready" in patrol_rendered
 
@@ -262,7 +308,10 @@ def test_render_state_splits_resource_costs_from_requirements() -> None:
     )
 
     assert "Cost: -" in defend_rendered
-    assert "Requirements: 1 catapult, cooldown ready, active threat" in defend_rendered
+    assert (
+        "Requirements: 1 catapult, cooldown ready, active threat, "
+        "25-75% success chance"
+    ) in defend_rendered
 
     kindle_rendered = render_state(
         GameState(), selected_action_index=action_index(2, 3)
@@ -357,6 +406,15 @@ def test_render_state_marks_patrol_automated_with_captain() -> None:
     assert "Patrol (A)" in rendered
 
 
+def test_render_state_marks_hunt_automated_with_ranger() -> None:
+    state = GameState()
+    state.units[UnitType.RANGER] = 1
+
+    rendered = render_state(state, selected_action_index=action_index(2, 0))
+
+    assert "Hunt (A)" in rendered
+
+
 def test_render_state_shows_expedition_cooldown_behind_action() -> None:
     state = GameState()
     state.action_cooldowns[EXPEDITION_ACTION_KEY] = 299.0
@@ -399,11 +457,10 @@ def test_render_state_marks_defend_automated_with_watchpost() -> None:
     assert "Defend (A)" in rendered
 
 
-def test_render_state_does_not_show_action_chances() -> None:
-    for selected_index, _menu_action in enumerate(MENU_ACTIONS):
-        rendered = render_state(GameState(), selected_action_index=selected_index)
+def test_render_state_shows_defend_success_chance_range() -> None:
+    rendered = render_state(GameState(), selected_action_index=action_index(2, 4))
 
-        assert "%" not in rendered
+    assert "25-75% success chance" in rendered
 
 
 def test_action_affordability_accounts_for_units_and_resources() -> None:
@@ -513,7 +570,7 @@ def test_dead_state_renders_game_over_and_restart_key() -> None:
     state = GameState()
     state.is_dead = True
     state.resources[ResourceType.FOOD] = 0.0
-    state.last_action_message = "The stores are empty."
+    record_action_message(state, "The stores are empty.")
 
     rendered = render_state(state)
 
