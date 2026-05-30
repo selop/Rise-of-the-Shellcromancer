@@ -1,4 +1,6 @@
 from shellcromancer.actions import (
+    DEFEND_ACTION_KEY,
+    DEFEND_COOLDOWN_SECONDS,
     EXPEDITION_ACTION_KEY,
     EXPEDITION_COOLDOWN_SECONDS,
     HUNT_ACTION_KEY,
@@ -12,6 +14,7 @@ from shellcromancer.actions import (
     build_farm,
     build_mine,
     build_quarry,
+    create_watchpost,
     create_worker,
     defend,
     expedition,
@@ -194,6 +197,44 @@ def test_promote_worker_to_captain_consumes_worker_and_gold() -> None:
     assert state.units[UnitType.CAPTAIN] == 1
     assert state.resources[ResourceType.GOLD] == 0.0
     assert "Patrols will now depart" in result.message
+
+
+def test_create_watchpost_consumes_gold_and_wood() -> None:
+    state = GameState()
+    state.resources[ResourceType.GOLD] = 10.0
+    state.resources[ResourceType.WOOD] = 50.0
+
+    result = create_watchpost(state)
+
+    assert result.success is True
+    assert state.units[UnitType.WATCHPOST] == 1
+    assert state.resources[ResourceType.GOLD] == 0.0
+    assert state.resources[ResourceType.WOOD] == 0.0
+    assert "Defend will now run automatically" in result.message
+
+
+def test_cannot_create_watchpost_without_gold() -> None:
+    state = GameState()
+    state.resources[ResourceType.GOLD] = 9.9
+    state.resources[ResourceType.WOOD] = 50.0
+
+    result = create_watchpost(state)
+
+    assert result.success is False
+    assert result.message == "Not enough gold to post a watchpost."
+    assert state.units[UnitType.WATCHPOST] == 0
+
+
+def test_cannot_create_watchpost_without_wood() -> None:
+    state = GameState()
+    state.resources[ResourceType.GOLD] = 10.0
+    state.resources[ResourceType.WOOD] = 49.9
+
+    result = create_watchpost(state)
+
+    assert result.success is False
+    assert result.message == "Not enough wood to post a watchpost."
+    assert state.units[UnitType.WATCHPOST] == 0
 
 
 def test_cannot_promote_captain_without_worker() -> None:
@@ -770,6 +811,21 @@ def test_defend_requires_active_threat() -> None:
     assert result.message == "No active threats to defend against."
 
 
+def test_defend_cannot_run_while_on_cooldown() -> None:
+    state = GameState()
+    state.buildings[BuildingType.CATAPULT] = 1
+    state.active_threats = [ActiveThreat(key="goblin_raid", remaining_seconds=12.0)]
+    state.action_cooldowns[DEFEND_ACTION_KEY] = 12.0
+
+    result = defend(state)
+
+    assert result.success is False
+    assert result.message == "Defend is on cooldown for 12 seconds."
+    assert [active_threat.key for active_threat in state.active_threats] == [
+        "goblin_raid"
+    ]
+
+
 def test_defend_stops_oldest_threat_and_keeps_catapult() -> None:
     state = GameState()
     state.buildings[BuildingType.CATAPULT] = 1
@@ -783,6 +839,7 @@ def test_defend_stops_oldest_threat_and_keeps_catapult() -> None:
     assert result.success is True
     assert result.message == "Defended against Goblin Raid. The threat has been stopped."
     assert state.buildings[BuildingType.CATAPULT] == 1
+    assert state.action_cooldowns[DEFEND_ACTION_KEY] == DEFEND_COOLDOWN_SECONDS
     assert [active_threat.key for active_threat in state.active_threats] == [
         "mine_saboteurs"
     ]

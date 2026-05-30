@@ -2,6 +2,7 @@ import pytest
 
 from shellcromancer.buildings import BuildingType
 from shellcromancer.actions import (
+    DEFEND_ACTION_KEY,
     EXPEDITION_ACTION_KEY,
     HUNT_ACTION_KEY,
     PATROL_ACTION_KEY,
@@ -296,6 +297,64 @@ def test_tick_does_not_auto_launch_expedition_when_ready(
     assert calls == []
     assert state.resources[ResourceType.GOLD] == pytest.approx(5.0)
     assert state.action_cooldowns[EXPEDITION_ACTION_KEY] == pytest.approx(0.0)
+
+
+def test_tick_auto_defends_when_watchpost_is_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GameState()
+    state.units[UnitType.WATCHPOST] = 1
+    state.buildings[BuildingType.CATAPULT] = 1
+    state.active_threats.append(ActiveThreat(key="goblin_raid", remaining_seconds=60.0))
+    calls = []
+
+    def fake_defend(defend_state: GameState) -> None:
+        calls.append(defend_state)
+
+    monkeypatch.setattr("shellcromancer.economy.defend", fake_defend)
+
+    tick(state)
+
+    assert calls == [state]
+
+
+def test_tick_does_not_auto_defend_without_watchpost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GameState()
+    state.buildings[BuildingType.CATAPULT] = 1
+    state.active_threats.append(ActiveThreat(key="goblin_raid", remaining_seconds=60.0))
+    calls = []
+
+    def fake_defend(defend_state: GameState) -> None:
+        calls.append(defend_state)
+
+    monkeypatch.setattr("shellcromancer.economy.defend", fake_defend)
+
+    tick(state)
+
+    assert calls == []
+
+
+def test_tick_does_not_auto_defend_until_cooldown_is_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GameState()
+    state.units[UnitType.WATCHPOST] = 1
+    state.buildings[BuildingType.CATAPULT] = 1
+    state.active_threats.append(ActiveThreat(key="goblin_raid", remaining_seconds=60.0))
+    state.action_cooldowns[DEFEND_ACTION_KEY] = 2.0
+    calls = []
+
+    def fake_defend(defend_state: GameState) -> None:
+        calls.append(defend_state)
+
+    monkeypatch.setattr("shellcromancer.economy.defend", fake_defend)
+
+    tick(state)
+
+    assert calls == []
+    assert state.action_cooldowns[DEFEND_ACTION_KEY] == pytest.approx(1.0)
 
 
 def test_tick_does_not_auto_patrol_without_patrol_prerequisites(

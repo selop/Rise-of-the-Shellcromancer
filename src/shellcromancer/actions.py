@@ -17,6 +17,8 @@ EXPEDITION_COOLDOWN_SECONDS = 300.0
 EXPEDITION_SHELL_FAIRY_BONUS = 0.2
 KINDLE_PYRE_ACTION_KEY = "kindle_the_pyre"
 KINDLE_PYRE_COOLDOWN_SECONDS = 600.0
+DEFEND_ACTION_KEY = "defend"
+DEFEND_COOLDOWN_SECONDS = 300.0
 
 
 @dataclass(frozen=True)
@@ -163,6 +165,26 @@ def promote_worker_to_captain(state: GameState) -> ActionResult:
         state,
         True,
         "Promoted a worker to captain. Patrols will now depart whenever they are ready.",
+    )
+
+
+def create_watchpost(state: GameState) -> ActionResult:
+    costs = {
+        ResourceType.GOLD: 10.0,
+        ResourceType.WOOD: 50.0,
+    }
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(
+            state, False, f"Not enough {_resource_name(missing)} to post a watchpost."
+        )
+
+    _spend(state, costs)
+    state.units[UnitType.WATCHPOST] += 1
+    return _finish(
+        state,
+        True,
+        "Posted a watchpost. Defend will now run automatically when ready.",
     )
 
 
@@ -528,6 +550,12 @@ def kindle_the_pyre(
 
 
 def defend(state: GameState) -> ActionResult:
+    cooldown = state.action_cooldowns.get(DEFEND_ACTION_KEY, 0.0)
+    if cooldown > 0:
+        return _finish(
+            state, False, f"Defend is on cooldown for {cooldown:.0f} seconds."
+        )
+
     if state.buildings[BuildingType.CATAPULT] < 1:
         return _finish(state, False, "Need at least 1 catapult to defend.")
 
@@ -536,6 +564,7 @@ def defend(state: GameState) -> ActionResult:
 
     stopped_threat = state.active_threats.pop(0)
     threat_name = active_threat_name(stopped_threat)
+    state.action_cooldowns[DEFEND_ACTION_KEY] = DEFEND_COOLDOWN_SECONDS
     return _finish(
         state,
         True,

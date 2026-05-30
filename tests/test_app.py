@@ -4,6 +4,7 @@ import json
 from textual.widgets import DataTable, Static, TabbedContent
 
 from shellcromancer.actions import (
+    DEFEND_ACTION_KEY,
     EXPEDITION_ACTION_KEY,
     HUNT_ACTION_KEY,
     KINDLE_PYRE_ACTION_KEY,
@@ -54,6 +55,7 @@ def test_render_state_lists_units_buildings_and_actions() -> None:
     assert "Patrol" in rendered
     assert "Expedition" in rendered
     assert "Captain" in rendered
+    assert "Watchpost" in rendered
     assert "Sorcerer" in rendered
     assert "Arcane Tower" in rendered
     assert "Catapult" in rendered
@@ -70,6 +72,7 @@ def test_menu_includes_new_units_buildings_and_actions() -> None:
     assert "Patrol" in labels
     assert "Expedition" in labels
     assert "Captain" in labels
+    assert "Watchpost" in labels
     assert "Sorcerer" in labels
     assert "Arcane Tower" in labels
     assert "Catapult" in labels
@@ -259,7 +262,7 @@ def test_render_state_splits_resource_costs_from_requirements() -> None:
     )
 
     assert "Cost: -" in defend_rendered
-    assert "Requirements: 1 catapult, active threat" in defend_rendered
+    assert "Requirements: 1 catapult, cooldown ready, active threat" in defend_rendered
 
     kindle_rendered = render_state(
         GameState(), selected_action_index=action_index(2, 3)
@@ -345,6 +348,15 @@ def test_render_state_shows_patrol_cooldown_behind_action() -> None:
     assert "Cooldown 1:59" in rendered
 
 
+def test_render_state_marks_patrol_automated_with_captain() -> None:
+    state = GameState()
+    state.units[UnitType.CAPTAIN] = 1
+
+    rendered = render_state(state, selected_action_index=action_index(2, 1))
+
+    assert "Patrol (A)" in rendered
+
+
 def test_render_state_shows_expedition_cooldown_behind_action() -> None:
     state = GameState()
     state.action_cooldowns[EXPEDITION_ACTION_KEY] = 299.0
@@ -365,6 +377,26 @@ def test_render_state_shows_kindle_the_pyre_cooldown_behind_action() -> None:
     assert "Kindle the Pyre" in rendered
     assert "9:59" in rendered
     assert "Cooldown 9:59" in rendered
+
+
+def test_render_state_shows_defend_cooldown_behind_action() -> None:
+    state = GameState()
+    state.action_cooldowns[DEFEND_ACTION_KEY] = 299.0
+
+    rendered = render_state(state, selected_action_index=action_index(2, 4))
+
+    assert "Defend" in rendered
+    assert "4:59" in rendered
+    assert "Cooldown 4:59" in rendered
+
+
+def test_render_state_marks_defend_automated_with_watchpost() -> None:
+    state = GameState()
+    state.units[UnitType.WATCHPOST] = 1
+
+    rendered = render_state(state, selected_action_index=action_index(2, 4))
+
+    assert "Defend (A)" in rendered
 
 
 def test_render_state_does_not_show_action_chances() -> None:
@@ -456,6 +488,9 @@ def test_defend_affordability_requires_catapult() -> None:
 
     state.active_threats.append(ActiveThreat(key="goblin_raid", remaining_seconds=60.0))
     assert is_action_affordable(state, defend) is True
+
+    state.action_cooldowns[DEFEND_ACTION_KEY] = 1.0
+    assert is_action_affordable(state, defend) is False
 
 
 def test_arcane_tower_affordability_requires_sorcerer_and_stone() -> None:

@@ -76,6 +76,7 @@ Per-second economy:
 - each soldier: -0.2 food
 - each lumberjack: +0.2 wood, -0.1 food
 - captains have no upkeep or production
+- watchposts have no upkeep or production
 - sorcerers have no upkeep or production
 - each farm: +0.2 food
 - each mine: +0.2 iron
@@ -95,18 +96,23 @@ One-time actions:
 - Kindle the Pyre: requires 1 sorcerer and 1 arcane tower, costs 100 wood, has
   a 10 minute cooldown, and can leave only ash, reveal 10-50 shell, or yield
   5-10 gold.
-- Defend: requires 1 catapult and an active threat. It stops the oldest active
-  threat without consuming the catapult.
+- Defend: requires 1 catapult and an active threat, has a 5 minute cooldown,
+  and stops the oldest active threat without consuming the catapult.
 
 Captains:
 
 - Captain: costs 1 worker and 10 gold.
 - While at least 1 captain exists, patrols automatically depart whenever the
   patrol cooldown and normal patrol prerequisites are ready.
+- Automated Patrol entries are labeled Patrol (A).
 - Expeditions are never automatic.
 
 Sorcery and siege:
 
+- Watchpost: costs 10 gold and 50 wood.
+- While at least 1 watchpost exists, Defend automatically runs whenever the
+  defend cooldown and normal defend prerequisites are ready.
+- Automated Defend entries are labeled Defend (A).
 - Sorcerer: costs 1 soldier and 50 shell.
 - Arcane Tower: costs 1 sorcerer and 250 stone.
 - Catapult: costs 5 gold, 100 wood, and 200 stone.

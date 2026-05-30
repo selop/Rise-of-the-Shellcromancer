@@ -31,6 +31,7 @@ def empty_action_cooldowns() -> dict[str, float]:
         "patrol": 0.0,
         "expedition": 0.0,
         "kindle_the_pyre": 0.0,
+        "defend": 0.0,
     }
 
 

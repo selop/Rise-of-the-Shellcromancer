@@ -2,7 +2,11 @@ import json
 
 import pytest
 
-from shellcromancer.actions import EXPEDITION_ACTION_KEY, HUNT_ACTION_KEY
+from shellcromancer.actions import (
+    DEFEND_ACTION_KEY,
+    EXPEDITION_ACTION_KEY,
+    HUNT_ACTION_KEY,
+)
 from shellcromancer.buildings import BuildingType
 from shellcromancer.game_state import GameState
 from shellcromancer.persistence import (
@@ -73,8 +77,10 @@ def test_state_from_dict_fills_missing_fields_with_defaults() -> None:
     assert state.resources[ResourceType.WOOD] == pytest.approx(10.0)
     assert state.units[UnitType.WORKER] == 1
     assert state.units[UnitType.SOLDIER] == 0
+    assert state.units[UnitType.WATCHPOST] == 0
     assert state.action_cooldowns[HUNT_ACTION_KEY] == pytest.approx(0.0)
     assert state.action_cooldowns[EXPEDITION_ACTION_KEY] == pytest.approx(0.0)
+    assert state.action_cooldowns[DEFEND_ACTION_KEY] == pytest.approx(0.0)
     assert state.active_threats == []
     assert state.threat_roll_cooldown == pytest.approx(600.0)
 
@@ -110,6 +116,7 @@ def test_save_file_uses_enum_values_as_keys(tmp_path) -> None:
 
     assert "food" in data["resources"]
     assert "worker" in data["units"]
+    assert "watchpost" in data["units"]
     assert "farm" in data["buildings"]
     assert "active_threats" in data
     assert "threat_roll_cooldown" in data

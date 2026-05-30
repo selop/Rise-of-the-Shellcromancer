@@ -73,6 +73,13 @@ UNIT_ACTIONS = (
         run=actions.promote_worker_to_captain,
     ),
     MenuAction(
+        label="Watchpost",
+        cost="10 gold, 50 wood",
+        resource_costs={ResourceType.GOLD: 10.0, ResourceType.WOOD: 50.0},
+        unit_costs={},
+        run=actions.create_watchpost,
+    ),
+    MenuAction(
         label="Sorcerer",
         cost="1 soldier, 50 shell",
         resource_costs={ResourceType.SHELL: 50.0},
@@ -179,10 +186,14 @@ ONE_TIME_ACTIONS = (
     ),
     MenuAction(
         label="Defend",
-        cost="Requires 1 catapult and an active threat. Stops the oldest threat.",
+        cost=(
+            "Requires 1 catapult and an active threat. Stops the oldest threat "
+            "with a 5 minute cooldown."
+        ),
         resource_costs={},
         unit_costs={},
         run=actions.defend,
+        cooldown_key=actions.DEFEND_ACTION_KEY,
         building_costs={BuildingType.CATAPULT: 1},
         requires_active_threat=True,
     ),
@@ -422,7 +433,7 @@ class ShellcromancerApp(App[None]):
         menu_action = selected_action(self.selected_action_index)
         readiness = action_status_label(self.state, menu_action)
         self.selected_view.update(
-            f"{menu_action.label}: {readiness}\n"
+            f"{action_display_label(self.state, menu_action)}: {readiness}\n"
             f"Cost: {format_action_cost(menu_action)}\n"
             f"Requirements: {format_action_requirements(menu_action)}"
         )
@@ -431,7 +442,7 @@ class ShellcromancerApp(App[None]):
         self.battle_view.update(format_battle_text(self.state))
 
     def _refresh_encyclopedia_view(self) -> None:
-        self.encyclopedia_view.update(format_encyclopedia_text())
+        self.encyclopedia_view.update(format_encyclopedia_text(self.state))
 
     def _refresh_status_view(self) -> None:
         if self.state.is_dead:
@@ -502,6 +513,14 @@ def action_status_label(state: GameState, menu_action: MenuAction) -> str:
     if status.startswith("Cooldown"):
         return f"[yellow]{status}[/]"
     return f"[red]{status}[/]"
+
+
+def action_display_label(state: GameState, menu_action: MenuAction) -> str:
+    if menu_action.label == "Patrol" and state.units[UnitType.CAPTAIN] >= 1:
+        return "Patrol (A)"
+    if menu_action.label == "Defend" and state.units[UnitType.WATCHPOST] >= 1:
+        return "Defend (A)"
+    return menu_action.label
 
 
 def format_quantity(amount: float | int) -> str:
@@ -624,7 +643,7 @@ def render_state(state: GameState, selected_action_index: int = 0) -> str:
             *shop_lines,
             "",
             "Selected",
-            f"{menu_action.label}: {readiness}",
+            f"{action_display_label(state, menu_action)}: {readiness}",
             f"Cost: {format_action_cost(menu_action)}",
             f"Requirements: {format_action_requirements(menu_action)}",
             "",
@@ -632,7 +651,7 @@ def render_state(state: GameState, selected_action_index: int = 0) -> str:
             *format_battle_lines(state),
             "",
             "Encyclopedia Tab",
-            *format_encyclopedia_lines(),
+            *format_encyclopedia_lines(state),
             "",
             f"Last action: {state.last_action_message}",
         ]
@@ -669,11 +688,11 @@ def format_battle_lines(state: GameState) -> list[str]:
     return lines
 
 
-def format_encyclopedia_text() -> str:
-    return "\n".join(format_encyclopedia_lines())
+def format_encyclopedia_text(state: GameState | None = None) -> str:
+    return "\n".join(format_encyclopedia_lines(state))
 
 
-def format_encyclopedia_lines() -> list[str]:
+def format_encyclopedia_lines(state: GameState | None = None) -> list[str]:
     lines = ["Resources"]
     for resource in ALL_RESOURCES:
         lines.append(f"- {resource.value.title()}: Stored resource used by the realm.")
@@ -696,8 +715,11 @@ def format_encyclopedia_lines() -> list[str]:
 
     lines.extend(["", "Actions"])
     for menu_action in MENU_ACTIONS:
+        label = menu_action.label
+        if state is not None:
+            label = action_display_label(state, menu_action)
         lines.append(
-            f"- {menu_action.label}: cost {format_action_cost(menu_action)}; "
+            f"- {label}: cost {format_action_cost(menu_action)}; "
             f"requirements {format_action_requirements(menu_action)}."
         )
 
@@ -731,9 +753,10 @@ def format_shop_columns(state: GameState, selected_action_index: int) -> list[st
                 continue
 
             menu_action = menu_actions[row]
+            label = action_display_label(state, menu_action)
             owned = owned_text(state, column, row)
             marker = ">" if column == selected_column and row == selected_row else " "
-            cells.append(f"{marker} {menu_action.label:<14} {owned:<5}")
+            cells.append(f"{marker} {label:<14} {owned:<5}")
         rows.append(tuple(cells))
 
     return [
@@ -760,8 +783,9 @@ def format_shop_text(state: GameState, selected_action_index: int) -> Text:
                 continue
 
             menu_action = menu_actions[row]
+            label = action_display_label(state, menu_action)
             marker = ">" if column == selected_column and row == selected_row else " "
-            cell = f"{marker} {menu_action.label:<14} {owned_text(state, column, row):<5}"
+            cell = f"{marker} {label:<14} {owned_text(state, column, row):<5}"
             style = action_status_style(state, menu_action)
             if column == selected_column and row == selected_row:
                 style = f"reverse {style}"

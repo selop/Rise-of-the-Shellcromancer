@@ -9,6 +9,7 @@ class UnitType(StrEnum):
     SOLDIER = "soldier"
     LUMBERJACK = "lumberjack"
     CAPTAIN = "captain"
+    WATCHPOST = "watchpost"
     SORCERER = "sorcerer"
 
 
@@ -35,6 +36,9 @@ UNIT_DEFINITIONS: dict[UnitType, UnitDefinition] = {
     ),
     UnitType.CAPTAIN: UnitDefinition(
         name="Captain",
+    ),
+    UnitType.WATCHPOST: UnitDefinition(
+        name="Watchpost",
     ),
     UnitType.SORCERER: UnitDefinition(
         name="Sorcerer",

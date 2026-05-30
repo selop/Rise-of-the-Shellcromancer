@@ -1,5 +1,5 @@
-from shellcromancer.buildings import BUILDING_DEFINITIONS
-from shellcromancer.actions import PATROL_ACTION_KEY, patrol
+from shellcromancer.buildings import BUILDING_DEFINITIONS, BuildingType
+from shellcromancer.actions import DEFEND_ACTION_KEY, PATROL_ACTION_KEY, defend, patrol
 from shellcromancer.game_state import GameState, empty_delta
 from shellcromancer.resources import ResourceType
 from shellcromancer.threats import (
@@ -80,6 +80,19 @@ def run_automatic_patrol(state: GameState) -> None:
     patrol(state)
 
 
+def run_automatic_defend(state: GameState) -> None:
+    if state.units[UnitType.WATCHPOST] < 1:
+        return
+    if state.action_cooldowns.get(DEFEND_ACTION_KEY, 0.0) > 0:
+        return
+    if state.buildings[BuildingType.CATAPULT] < 1:
+        return
+    if not state.active_threats:
+        return
+
+    defend(state)
+
+
 def update_threats(state: GameState, elapsed_seconds: float = 1.0) -> None:
     expired_messages = []
     remaining_threats = []
@@ -121,4 +134,5 @@ def tick(state: GameState) -> None:
 
     reduce_cooldowns(state)
     run_automatic_patrol(state)
+    run_automatic_defend(state)
     update_threats(state)
