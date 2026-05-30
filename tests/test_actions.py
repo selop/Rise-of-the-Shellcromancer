@@ -476,6 +476,7 @@ def test_patrol_cannot_run_while_on_cooldown() -> None:
 def test_kindle_the_pyre_requires_wood() -> None:
     state = GameState()
     state.units[UnitType.SORCERER] = 1
+    state.buildings[BuildingType.ARCANE_TOWER] = 1
     state.resources[ResourceType.WOOD] = 99.9
 
     result = kindle_the_pyre(state, roll=0.5)
@@ -496,9 +497,22 @@ def test_kindle_the_pyre_requires_sorcerer() -> None:
     assert state.action_cooldowns[KINDLE_PYRE_ACTION_KEY] == 0.0
 
 
+def test_kindle_the_pyre_requires_arcane_tower() -> None:
+    state = GameState()
+    state.units[UnitType.SORCERER] = 1
+    state.resources[ResourceType.WOOD] = 100.0
+
+    result = kindle_the_pyre(state, roll=0.5)
+
+    assert result.success is False
+    assert result.message == "Need at least 1 arcane tower to kindle the pyre."
+    assert state.action_cooldowns[KINDLE_PYRE_ACTION_KEY] == 0.0
+
+
 def test_kindle_the_pyre_can_leave_only_ash_and_starts_cooldown() -> None:
     state = GameState()
     state.units[UnitType.SORCERER] = 1
+    state.buildings[BuildingType.ARCANE_TOWER] = 1
     state.resources[ResourceType.WOOD] = 100.0
 
     result = kindle_the_pyre(state, roll=0.19)
@@ -516,6 +530,7 @@ def test_kindle_the_pyre_can_leave_only_ash_and_starts_cooldown() -> None:
 def test_kindle_the_pyre_can_gain_shell() -> None:
     state = GameState()
     state.units[UnitType.SORCERER] = 1
+    state.buildings[BuildingType.ARCANE_TOWER] = 1
     state.resources[ResourceType.WOOD] = 100.0
 
     result = kindle_the_pyre(state, roll=0.5, shell_reward=37)
@@ -531,6 +546,7 @@ def test_kindle_the_pyre_can_gain_shell() -> None:
 def test_kindle_the_pyre_can_gain_gold() -> None:
     state = GameState()
     state.units[UnitType.SORCERER] = 1
+    state.buildings[BuildingType.ARCANE_TOWER] = 1
     state.resources[ResourceType.WOOD] = 100.0
 
     result = kindle_the_pyre(state, roll=0.8, gold_reward=6)

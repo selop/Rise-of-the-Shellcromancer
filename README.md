@@ -31,17 +31,20 @@ uv run python -m shellcromancer.app
 ## Controls
 
 - `tab` / mouse: move between controls and tabs
+- `s`: open the Scribe tab
+- `r`: open the Reign tab
+- `b`: open the Battle tab
 - `up` / `down`: select a shop row within the current column
 - `left` / `right`: move between the unit, building, and action shop columns
 - `enter`: create or use the selected shop item
-- `e`: create or use the selected shop item
-- `r`: start a new run after game over
+- `n`: start a new run after game over
 - `q`: quit
 
-The Resources tab shows current stores, per-second changes, and separate owned
-unit and building lists. The Shop tab splits units, buildings, and actions into
-three columns. Green entries are ready to buy or use, while blocked entries are
-red and cooldowns are yellow.
+The Scribe tab shows current stores, per-second changes, and separate owned
+unit and building lists. The Reign tab splits units, buildings, and actions into
+three columns. The Battle tab is a placeholder for future battle planning.
+Green entries are ready to buy or use, while blocked entries are red and
+cooldowns are yellow.
 
 Only the currently selected shop item shows its recipe or cost below the shop.
 
@@ -84,8 +87,9 @@ One-time actions:
 - Patrol: requires 3 soldiers, costs 10 food, has a 2 minute cooldown, and can
   lose soldiers, return peacefully, find gold, catch a shell fairy, rescue a
   worker, or recover food and iron.
-- Kindle the Pyre: requires 1 sorcerer, costs 100 wood, has a 10 minute
-  cooldown, and can leave only ash, reveal 10-50 shell, or yield 5-10 gold.
+- Kindle the Pyre: requires 1 sorcerer and 1 arcane tower, costs 100 wood, has
+  a 10 minute cooldown, and can leave only ash, reveal 10-50 shell, or yield
+  5-10 gold.
 - Defend: requires 1 catapult. The battle effect is not implemented yet.
 
 Captains:

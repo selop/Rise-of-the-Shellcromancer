@@ -25,8 +25,12 @@ from shellcromancer.units import UnitType
 def test_render_state_snapshot_only_shows_implemented_features() -> None:
     rendered = render_state(GameState())
 
-    assert "Resources Tab" in rendered
-    assert "Shop Tab" in rendered
+    assert "Scribe Tab" in rendered
+    assert "Reign Tab" in rendered
+    assert "Battle Tab" in rendered
+    assert "Battle plans are not implemented yet." in rendered
+    assert "Resources Tab" not in rendered
+    assert "Shop Tab" not in rendered
     assert "Future PvE Targets" not in rendered
     assert "Village" not in rendered
 
@@ -73,7 +77,7 @@ def test_render_state_shows_gold_resource() -> None:
     assert "gold      0.0   (+0.0/s)" in rendered
 
 
-def test_app_uses_resource_and_shop_tabs(tmp_path) -> None:
+def test_app_uses_scribe_reign_and_battle_tabs(tmp_path) -> None:
     async def run_app() -> None:
         app = ShellcromancerApp(save_path=tmp_path / "save.json")
         async with app.run_test() as pilot:
@@ -84,32 +88,107 @@ def test_app_uses_resource_and_shop_tabs(tmp_path) -> None:
             unit_table = app.query_one("#unit-table", DataTable)
             building_table = app.query_one("#building-table", DataTable)
             shop_view = app.query_one("#shop-view", Static)
+            battle_view = app.query_one("#battle-view", Static)
 
-            assert tabs.active == "resources-tab"
+            assert tabs.active == "scribe-tab"
             assert resource_table.row_count == len(ResourceType)
             assert unit_table.row_count == len(UnitType)
             assert building_table.row_count == len(BuildingType)
             assert unit_table.get_row_at(0) == ["Worker", "0"]
             assert building_table.get_row_at(0) == ["Farm", "0"]
             assert str(shop_view.content).startswith("Units")
+            assert str(battle_view.content) == "Battle plans are not implemented yet."
 
     asyncio.run(run_app())
 
 
-def test_shop_tab_keeps_initial_selection_buyable(tmp_path) -> None:
+def test_app_frames_major_panels() -> None:
+    css = ShellcromancerApp.CSS
+
+    assert "#resource-table, #unit-table, #building-table" in css
+    assert "#shop-view" in css
+    assert "#battle-view" in css
+    assert "#selected" in css
+    assert "#status" in css
+    assert "#execute" not in css
+    assert "border: solid $surface-lighten-1;" in css
+    assert "border: solid $accent;" in css
+    assert "min-height: 6;" in css
+
+
+def test_status_panel_shows_story_and_last_action(tmp_path) -> None:
+    async def run_app() -> None:
+        app = ShellcromancerApp(save_path=tmp_path / "save.json")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            app.state.last_action_message = "A patrol returned with gold."
+            app._refresh_view()
+
+            status = app.query_one("#status", Static)
+            assert "Story" in str(status.content)
+            assert "Last action: A patrol returned with gold." in str(status.content)
+
+    asyncio.run(run_app())
+
+
+def test_status_panel_shows_game_over_story(tmp_path) -> None:
+    async def run_app() -> None:
+        app = ShellcromancerApp(save_path=tmp_path / "save.json")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            app.state.is_dead = True
+            app.state.last_action_message = "The stores are empty."
+            app._refresh_view()
+
+            status = app.query_one("#status", Static)
+            assert "Game Over" in str(status.content)
+            assert "The stores are empty." in str(status.content)
+            assert "Press n to start a new run." in str(status.content)
+
+    asyncio.run(run_app())
+
+
+def test_scribe_reign_and_battle_tab_shortcuts(tmp_path) -> None:
     async def run_app() -> None:
         app = ShellcromancerApp(save_path=tmp_path / "save.json")
         async with app.run_test() as pilot:
             await pilot.pause()
 
             tabs = app.query_one(TabbedContent)
-            tabs.active = "shop-tab"
+            await pilot.press("r")
+            await pilot.pause()
+            assert tabs.active == "reign-tab"
+
+            await pilot.press("b")
+            await pilot.pause()
+            assert tabs.active == "battle-tab"
+
+            await pilot.press("s")
+            await pilot.pause()
+            assert tabs.active == "scribe-tab"
+
+    asyncio.run(run_app())
+
+
+def test_reign_tab_keeps_initial_selection_buyable_and_enter_executes(tmp_path) -> None:
+    async def run_app() -> None:
+        app = ShellcromancerApp(save_path=tmp_path / "save.json")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            tabs = app.query_one(TabbedContent)
+            tabs.active = "reign-tab"
             await pilot.pause()
 
             assert app.selected_action_index == action_index(0, 0)
             await pilot.press("e")
             await pilot.pause()
+            assert app.state.units[UnitType.WORKER] == 0
 
+            await pilot.press("enter")
+            await pilot.pause()
             assert app.state.units[UnitType.WORKER] == 1
 
     asyncio.run(run_app())
@@ -120,8 +199,57 @@ def test_render_state_only_shows_selected_recipe() -> None:
 
     assert "Selected" in rendered
     assert "Cost: 10 shell" in rendered
+    assert "Requirements: -" in rendered
     assert rendered.count("Cost:") == 1
+    assert rendered.count("Requirements:") == 1
     assert "1 worker, 5 iron, 5 shell" not in rendered
+
+
+def test_render_state_splits_resource_costs_from_requirements() -> None:
+    farm_rendered = render_state(GameState(), selected_action_index=action_index(1, 0))
+    patrol_rendered = render_state(
+        GameState(), selected_action_index=action_index(2, 1)
+    )
+    defend_rendered = render_state(
+        GameState(), selected_action_index=action_index(2, 3)
+    )
+
+    assert "Cost: 10 wood, 10 stone, 2 iron" in farm_rendered
+    assert "Requirements: 1 worker" in farm_rendered
+    assert "Cost: 10 wood, 10 stone, 2 iron, 1 worker" not in farm_rendered
+
+    assert "Cost: 10 food" in patrol_rendered
+    assert "Requirements: 3 soldiers, cooldown ready" in patrol_rendered
+
+    assert "Cost: -" in defend_rendered
+    assert "Requirements: 1 catapult" in defend_rendered
+
+    kindle_rendered = render_state(
+        GameState(), selected_action_index=action_index(2, 2)
+    )
+    assert "Cost: 100 wood" in kindle_rendered
+    assert (
+        "Requirements: 1 sorcerer, 1 arcane tower, cooldown ready"
+        in kindle_rendered
+    )
+
+
+def test_selected_panel_splits_costs_and_requirements(tmp_path) -> None:
+    async def run_app() -> None:
+        app = ShellcromancerApp(save_path=tmp_path / "save.json")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            app.selected_action_index = action_index(1, 0)
+            app._refresh_view()
+
+            selected = app.query_one("#selected", Static)
+            content = str(selected.content)
+            assert "Farm: [red]Missing requirements[/]" in content
+            assert "Cost: 10 wood, 10 stone, 2 iron" in content
+            assert "Requirements: 1 worker" in content
+
+    asyncio.run(run_app())
 
 
 def test_render_state_marks_affordable_and_unaffordable_actions() -> None:
@@ -132,6 +260,7 @@ def test_render_state_marks_affordable_and_unaffordable_actions() -> None:
 
     assert "[green]Ready[/]" in worker_rendered
     assert "[red]Missing requirements[/]" in farm_rendered
+    assert farm_rendered.count("[red]Missing requirements[/]") == 1
 
 
 def test_action_status_style_marks_buyable_and_blocked_items() -> None:
@@ -227,7 +356,7 @@ def test_patrol_affordability_requires_soldiers_food_and_cooldown() -> None:
     assert is_action_affordable(state, patrol) is False
 
 
-def test_kindle_the_pyre_affordability_requires_wood_and_cooldown() -> None:
+def test_kindle_the_pyre_affordability_requires_wood_tower_and_cooldown() -> None:
     state = GameState()
     kindle = next(action for action in MENU_ACTIONS if action.label == "Kindle the Pyre")
 
@@ -237,6 +366,9 @@ def test_kindle_the_pyre_affordability_requires_wood_and_cooldown() -> None:
     assert is_action_affordable(state, kindle) is False
 
     state.units[UnitType.SORCERER] = 1
+    assert is_action_affordable(state, kindle) is False
+
+    state.buildings[BuildingType.ARCANE_TOWER] = 1
     assert is_action_affordable(state, kindle) is True
 
     state.action_cooldowns[KINDLE_PYRE_ACTION_KEY] = 1.0
@@ -279,7 +411,7 @@ def test_dead_state_renders_game_over_and_restart_key() -> None:
 
     assert "Game Over" in rendered
     assert "Food reached 0" in rendered
-    assert "Press r to start a new run" in rendered
+    assert "Press n to start a new run" in rendered
     assert "The stores are empty." in rendered
 
 
@@ -302,6 +434,44 @@ def test_reset_starts_new_run_and_saves_state(tmp_path) -> None:
     assert app.state.is_dead is False
     assert app.state.resources[ResourceType.FOOD] == 10.0
     assert save_path.exists()
+
+
+def test_new_game_shortcut_starts_new_run_after_death(tmp_path) -> None:
+    async def run_app() -> None:
+        save_path = tmp_path / "save.json"
+        app = ShellcromancerApp(save_path=save_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.state.is_dead = True
+            app.state.resources[ResourceType.FOOD] = 0.0
+            app._refresh_view()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            assert app.state.is_dead is False
+            assert app.state.resources[ResourceType.FOOD] == 10.0
+            assert save_path.exists()
+
+    asyncio.run(run_app())
+
+
+def test_resource_shortcut_does_not_restart_after_death(tmp_path) -> None:
+    async def run_app() -> None:
+        app = ShellcromancerApp(save_path=tmp_path / "save.json")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.state.is_dead = True
+            app.state.resources[ResourceType.FOOD] = 0.0
+            app._refresh_view()
+
+            await pilot.press("r")
+            await pilot.pause()
+
+            assert app.state.is_dead is True
+            assert app.state.resources[ResourceType.FOOD] == 0.0
+
+    asyncio.run(run_app())
 
 
 def test_app_marks_loaded_zero_food_save_dead(tmp_path) -> None:

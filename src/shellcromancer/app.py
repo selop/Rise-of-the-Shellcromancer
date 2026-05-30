@@ -7,7 +7,6 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import (
-    Button,
     DataTable,
     Footer,
     Header,
@@ -17,12 +16,12 @@ from textual.widgets import (
 )
 
 from shellcromancer import actions
-from shellcromancer.buildings import BuildingType
+from shellcromancer.buildings import BUILDING_DEFINITIONS, BuildingType
 from shellcromancer.economy import mark_dead_if_food_depleted, tick
 from shellcromancer.game_state import GameState
 from shellcromancer.persistence import load_state, save_state
 from shellcromancer.resources import ALL_RESOURCES, ResourceType
-from shellcromancer.units import UnitType
+from shellcromancer.units import UNIT_DEFINITIONS, UnitType
 
 
 @dataclass(frozen=True)
@@ -158,11 +157,12 @@ ONE_TIME_ACTIONS = (
     ),
     MenuAction(
         label="Kindle the Pyre",
-        cost="1 sorcerer, 100 wood. Burn offerings for shell or gold.",
+        cost="1 sorcerer, 1 arcane tower, 100 wood. Burn offerings for shell or gold.",
         resource_costs={ResourceType.WOOD: 100.0},
         unit_costs={UnitType.SORCERER: 1},
         run=actions.kindle_the_pyre,
         cooldown_key=actions.KINDLE_PYRE_ACTION_KEY,
+        building_costs={BuildingType.ARCANE_TOWER: 1},
     ),
     MenuAction(
         label="Defend",
@@ -196,6 +196,11 @@ class ShellcromancerApp(App[None]):
         width: 100%;
     }
 
+    #resource-table, #unit-table, #building-table {
+        border: solid $surface-lighten-1;
+        margin: 0 1 1 1;
+    }
+
     .overview-assets {
         height: auto;
     }
@@ -205,16 +210,20 @@ class ShellcromancerApp(App[None]):
         height: auto;
     }
 
-    #shop-view {
+    #shop-view, #battle-view {
         padding: 1;
         height: auto;
+        border: solid $surface-lighten-1;
+        margin: 0 1 1 1;
     }
 
     #status {
-        dock: bottom;
         height: auto;
+        min-height: 6;
         padding: 1 2;
-        border-top: solid $surface-lighten-1;
+        margin: 0 1;
+        border: solid $accent;
+        background: $surface;
     }
 
     .section-title {
@@ -225,11 +234,10 @@ class ShellcromancerApp(App[None]):
     #selected {
         padding: 1 1;
         min-height: 4;
-    }
-
-    #execute {
+        border: solid $surface-lighten-1;
         margin: 0 1 1 1;
     }
+
     """
 
     BINDINGS = [
@@ -238,8 +246,10 @@ class ShellcromancerApp(App[None]):
         Binding("left,h", "select_left", "Previous column", priority=True),
         Binding("right,l", "select_right", "Next column", priority=True),
         Binding("enter", "execute_selected", "Use selected", priority=True),
-        Binding("e", "execute_selected", "Use selected", priority=True),
-        Binding("r", "reset", "Restart after death"),
+        Binding("s", "show_scribe", "Scribe"),
+        Binding("r", "show_reign", "Reign"),
+        Binding("b", "show_battle", "Battle"),
+        Binding("n", "reset", "New game after death"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -260,17 +270,17 @@ class ShellcromancerApp(App[None]):
         )
         self.shop_view = Static(id="shop-view")
         self.selected_view = Static(id="selected")
-        self.status_view = Static(id="status")
-        self.execute_button = Button(
-            "Use Selected", id="execute", variant="primary", action="execute_selected"
+        self.battle_view = Static(
+            "Battle plans are not implemented yet.", id="battle-view"
         )
+        self.status_view = Static(id="status")
         self.tables_ready = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with TabbedContent(initial="resources-tab"):
-            with TabPane("Resources", id="resources-tab"):
-                yield Static("Resources", classes="section-title")
+        with TabbedContent(initial="scribe-tab"):
+            with TabPane("Scribe", id="scribe-tab"):
+                yield Static("Scribe", classes="section-title")
                 yield self.resource_table
                 with Horizontal(classes="overview-assets"):
                     with Vertical(classes="overview-column"):
@@ -279,10 +289,11 @@ class ShellcromancerApp(App[None]):
                     with Vertical(classes="overview-column"):
                         yield Static("Buildings", classes="section-title")
                         yield self.building_table
-            with TabPane("Shop", id="shop-tab"):
+            with TabPane("Reign", id="reign-tab"):
                 yield self.shop_view
                 yield self.selected_view
-                yield self.execute_button
+            with TabPane("Battle", id="battle-tab"):
+                yield self.battle_view
         yield self.status_view
         yield Footer()
 
@@ -331,6 +342,15 @@ class ShellcromancerApp(App[None]):
         mark_dead_if_food_depleted(self.state)
         save_state(self.state, self.save_path)
         self._refresh_view()
+
+    def action_show_scribe(self) -> None:
+        self.query_one(TabbedContent).active = "scribe-tab"
+
+    def action_show_reign(self) -> None:
+        self.query_one(TabbedContent).active = "reign-tab"
+
+    def action_show_battle(self) -> None:
+        self.query_one(TabbedContent).active = "battle-tab"
 
     def action_reset(self) -> None:
         if not self.state.is_dead:
@@ -381,20 +401,21 @@ class ShellcromancerApp(App[None]):
         menu_action = selected_action(self.selected_action_index)
         readiness = action_status_label(self.state, menu_action)
         self.selected_view.update(
-            f"{menu_action.label}: {readiness}\nCost: {menu_action.cost}"
-        )
-        self.execute_button.disabled = self.state.is_dead or not is_action_affordable(
-            self.state, menu_action
+            f"{menu_action.label}: {readiness}\n"
+            f"Cost: {format_action_cost(menu_action)}\n"
+            f"Requirements: {format_action_requirements(menu_action)}"
         )
 
     def _refresh_status_view(self) -> None:
         if self.state.is_dead:
             self.status_view.update(
-                f"[red]Game Over[/]\n{self.state.last_action_message}\nPress r to start a new run."
+                f"[red bold]Game Over[/]\n{self.state.last_action_message}\nPress n to start a new run."
             )
             return
 
-        self.status_view.update(f"Last action: {self.state.last_action_message}")
+        self.status_view.update(
+            f"[bold]Story[/]\nLast action: {self.state.last_action_message}"
+        )
 
 
 def is_action_affordable(state: GameState, menu_action: MenuAction) -> bool:
@@ -447,6 +468,46 @@ def action_status_label(state: GameState, menu_action: MenuAction) -> str:
     if status.startswith("Cooldown"):
         return f"[yellow]{status}[/]"
     return f"[red]{status}[/]"
+
+
+def format_quantity(amount: float | int) -> str:
+    if isinstance(amount, float) and amount.is_integer():
+        return str(int(amount))
+    return str(amount)
+
+
+def format_action_cost(menu_action: MenuAction) -> str:
+    if not menu_action.resource_costs:
+        return "-"
+
+    return ", ".join(
+        f"{format_quantity(amount)} {resource.value}"
+        for resource, amount in menu_action.resource_costs.items()
+    )
+
+
+def format_counted_name(amount: int, singular_name: str) -> str:
+    name = singular_name.lower()
+    if amount == 1:
+        return f"{amount} {name}"
+    return f"{amount} {name}s"
+
+
+def format_action_requirements(menu_action: MenuAction) -> str:
+    requirements = [
+        format_counted_name(amount, UNIT_DEFINITIONS[unit].name)
+        for unit, amount in menu_action.unit_costs.items()
+    ]
+    requirements.extend(
+        format_counted_name(amount, BUILDING_DEFINITIONS[building].name)
+        for building, amount in (menu_action.building_costs or {}).items()
+    )
+    if menu_action.cooldown_key is not None:
+        requirements.append("cooldown ready")
+
+    if not requirements:
+        return "-"
+    return ", ".join(requirements)
 
 
 def owned_text(state: GameState, column: int, row: int) -> str:
@@ -514,7 +575,7 @@ def render_state(state: GameState, selected_action_index: int = 0) -> str:
         [
             "Rise of the Shellcromancer",
             "",
-            "Resources Tab",
+            "Scribe Tab",
             *resource_lines,
             "",
             "Units",
@@ -523,12 +584,16 @@ def render_state(state: GameState, selected_action_index: int = 0) -> str:
             "Buildings",
             *building_lines,
             "",
-            "Shop Tab",
+            "Reign Tab",
             *shop_lines,
             "",
             "Selected",
             f"{menu_action.label}: {readiness}",
-            f"Cost: {menu_action.cost}",
+            f"Cost: {format_action_cost(menu_action)}",
+            f"Requirements: {format_action_requirements(menu_action)}",
+            "",
+            "Battle Tab",
+            "Battle plans are not implemented yet.",
             "",
             f"Last action: {state.last_action_message}",
         ]
@@ -547,10 +612,9 @@ def format_shop_columns(state: GameState, selected_action_index: int) -> list[st
                 continue
 
             menu_action = menu_actions[row]
-            status = action_status_label(state, menu_action)
             owned = owned_text(state, column, row)
             marker = ">" if column == selected_column and row == selected_row else " "
-            cells.append(f"{marker} {menu_action.label:<14} {owned:<5} {status}")
+            cells.append(f"{marker} {menu_action.label:<14} {owned:<5}")
         rows.append(tuple(cells))
 
     return [
@@ -578,11 +642,7 @@ def format_shop_text(state: GameState, selected_action_index: int) -> Text:
 
             menu_action = menu_actions[row]
             marker = ">" if column == selected_column and row == selected_row else " "
-            status = action_status_text(state, menu_action)
-            cell = (
-                f"{marker} {menu_action.label:<14} "
-                f"{owned_text(state, column, row):<5} {status}"
-            )
+            cell = f"{marker} {menu_action.label:<14} {owned_text(state, column, row):<5}"
             style = action_status_style(state, menu_action)
             if column == selected_column and row == selected_row:
                 style = f"reverse {style}"
@@ -610,7 +670,7 @@ def render_game_over(state: GameState) -> str:
             "",
             state.last_action_message,
             "",
-            "Press r to start a new run. Press q to quit.",
+            "Press n to start a new run. Press q to quit.",
         ]
     )
 

@@ -348,6 +348,11 @@ def kindle_the_pyre(
     if state.units[UnitType.SORCERER] < 1:
         return _finish(state, False, "Need at least 1 sorcerer to kindle the pyre.")
 
+    if state.buildings[BuildingType.ARCANE_TOWER] < 1:
+        return _finish(
+            state, False, "Need at least 1 arcane tower to kindle the pyre."
+        )
+
     costs = {ResourceType.WOOD: 100.0}
     can_afford, missing = _can_afford(state, costs)
     if not can_afford and missing is not None:
