@@ -163,6 +163,7 @@ def test_status_panel_shows_story_and_last_three_actions(tmp_path) -> None:
             status = app.query_one("#status", Static)
             assert "Run Time: 0:00" in str(status.content)
             content = str(status.content)
+            assert f"Save: {tmp_path / 'save.json'}" in content
             assert "Story" in content
             assert "A patrol returned with gold." in content
             assert "A ranger found a trail." in content
@@ -211,6 +212,7 @@ def test_status_panel_shows_game_over_story(tmp_path) -> None:
             status = app.query_one("#status", Static)
             assert "Game Over" in str(status.content)
             assert "Run Time: 0:00" in str(status.content)
+            assert f"Save: {tmp_path / 'save.json'}" in str(status.content)
             assert "The stores are empty." in str(status.content)
             assert "Press n to start a new run." in str(status.content)
 
@@ -605,6 +607,23 @@ def test_reset_starts_new_run_and_saves_state(tmp_path) -> None:
     assert app.state.is_dead is False
     assert app.state.resources[ResourceType.FOOD] == 10.0
     assert save_path.exists()
+
+
+def test_app_freezes_default_save_path_on_startup(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first_data_home = tmp_path / "first"
+    second_data_home = tmp_path / "second"
+    monkeypatch.setenv("XDG_DATA_HOME", str(first_data_home))
+    app = ShellcromancerApp()
+
+    assert app.save_path == first_data_home / "shellcromancer" / "save.json"
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(second_data_home))
+    app._on_tick()
+
+    assert (first_data_home / "shellcromancer" / "save.json").exists()
+    assert not (second_data_home / "shellcromancer" / "save.json").exists()
 
 
 def test_new_game_shortcut_starts_new_run_after_death(tmp_path) -> None:

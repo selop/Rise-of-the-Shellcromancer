@@ -19,7 +19,7 @@ from shellcromancer import actions
 from shellcromancer.buildings import BUILDING_DEFINITIONS, BuildingType
 from shellcromancer.economy import mark_dead_if_food_depleted, tick
 from shellcromancer.game_state import GameState
-from shellcromancer.persistence import load_state, save_state
+from shellcromancer.persistence import default_save_path, load_state, save_state
 from shellcromancer.resources import ALL_RESOURCES, ResourceType
 from shellcromancer.threats import (
     THREAT_DEFINITIONS,
@@ -294,7 +294,7 @@ class ShellcromancerApp(App[None]):
 
     def __init__(self, save_path: Path | None = None) -> None:
         super().__init__()
-        self.save_path = save_path
+        self.save_path = save_path or default_save_path()
         self.state = load_state(self.save_path)
         mark_dead_if_food_depleted(self.state)
         self.selected_action_index = 0
@@ -472,6 +472,7 @@ class ShellcromancerApp(App[None]):
             self.status_view.update(
                 "[red bold]Game Over[/]\n"
                 f"Run Time: {format_duration(self.state.run_elapsed_seconds)}\n"
+                f"Save: {self.save_path}\n"
                 + "\n".join(format_story_lines(self.state))
                 + "\nPress n to start a new run."
             )
@@ -479,6 +480,7 @@ class ShellcromancerApp(App[None]):
 
         self.status_view.update(
             f"Run Time: {format_duration(self.state.run_elapsed_seconds)}\n"
+            f"Save: {self.save_path}\n"
             "[bold]Story[/]\n"
             + "\n".join(format_story_lines(self.state))
         )

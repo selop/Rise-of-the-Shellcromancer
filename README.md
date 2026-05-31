@@ -50,8 +50,8 @@ Encyclopedia tab lists current resources, units, buildings, actions, and threats
 from game data. Green entries are ready to buy or use, while blocked entries are
 red and cooldowns are yellow.
 
-The status panel shows the current run time while playing. Game over shows the
-final run length.
+The status panel shows the current run time and active save file while playing.
+Game over shows the final run length and the same save file location.
 
 Only the currently selected shop item shows its recipe or cost below the shop.
 
