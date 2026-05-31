@@ -39,6 +39,8 @@ uv run python -m shellcromancer.app
 - `up` / `down`: select a shop row within the current column
 - `left` / `right`: move between the unit, building, and action shop columns
 - `enter`: create or use the selected shop item
+- `a`: toggle automation for the selected Hunt, Patrol, or Defend action once
+  its automation unit or building has been unlocked
 - `n`: start a new run after game over
 - `q`: quit
 
@@ -120,24 +122,30 @@ One-time actions:
 Rangers:
 
 - Ranger: costs 1 soldier, 5 gold, and 10 shell.
-- While at least 1 ranger exists, hunts automatically depart whenever the hunt
-  cooldown and normal hunt prerequisites are ready.
-- Automated Hunt entries are labeled Hunt (A).
+- Auto Hunt starts enabled. While at least 1 ranger exists, hunts automatically
+  depart whenever automation is enabled, the hunt cooldown is ready, and normal
+  hunt prerequisites are ready.
+- Once a ranger exists, Hunt is labeled Hunt (A) when automatic and Hunt (M)
+  when manual-only.
 
 Captains:
 
 - Captain: costs 1 soldier and 10 gold.
-- While at least 1 captain exists, patrols automatically depart whenever the
-  patrol cooldown and normal patrol prerequisites are ready.
-- Automated Patrol entries are labeled Patrol (A).
+- Auto Patrol starts disabled. While at least 1 captain exists, patrols
+  automatically depart whenever automation is enabled, the patrol cooldown is
+  ready, and normal patrol prerequisites are ready.
+- Once a captain exists, Patrol is labeled Patrol (A) when automatic and
+  Patrol (M) when manual-only.
 - Expeditions are never automatic.
 
 Sorcery and siege:
 
 - Watchpost: costs 10 gold and 50 wood.
-- While at least 1 watchpost exists, Defend automatically runs whenever the
-  defend cooldown and normal defend prerequisites are ready.
-- Automated Defend entries are labeled Defend (A).
+- Auto Defend starts enabled. While at least 1 watchpost exists, Defend
+  automatically runs whenever automation is enabled, the defend cooldown is
+  ready, and normal defend prerequisites are ready.
+- Once a watchpost exists, Defend is labeled Defend (A) when automatic and
+  Defend (M) when manual-only.
 - Sorcerer: costs 1 soldier and 50 shell.
 - Arcane Tower: costs 1 sorcerer and 250 stone.
 - Catapult: costs 5 gold, 100 wood, and 200 stone.

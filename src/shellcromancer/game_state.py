@@ -38,6 +38,14 @@ def empty_action_cooldowns() -> dict[str, float]:
     }
 
 
+def initial_automation_enabled() -> dict[str, bool]:
+    return {
+        "hunt": True,
+        "patrol": False,
+        "defend": True,
+    }
+
+
 def initial_action_history() -> list[str]:
     return [WELCOME_MESSAGE]
 
@@ -48,6 +56,9 @@ class GameState:
     units: dict[UnitType, int] = field(default_factory=empty_units)
     buildings: dict[BuildingType, int] = field(default_factory=empty_buildings)
     action_cooldowns: dict[str, float] = field(default_factory=empty_action_cooldowns)
+    automation_enabled: dict[str, bool] = field(
+        default_factory=initial_automation_enabled
+    )
     active_threats: list[ActiveThreat] = field(default_factory=list)
     threat_roll_cooldown: float = THREAT_ROLL_SECONDS
     last_delta: dict[ResourceType, float] = field(default_factory=empty_delta)

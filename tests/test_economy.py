@@ -6,12 +6,15 @@ from shellcromancer.actions import (
     EXPEDITION_ACTION_KEY,
     HUNT_ACTION_KEY,
     PATROL_ACTION_KEY,
+    hunt,
+    patrol,
 )
 from shellcromancer.economy import (
     DEATH_MESSAGE,
     apply_delta,
     calculate_delta,
     reduce_cooldowns,
+    run_automatic_patrol,
     tick,
 )
 from shellcromancer.game_state import GameState
@@ -217,6 +220,7 @@ def test_tick_runs_automatic_patrol_when_captain_and_requirements_are_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     state = GameState()
+    state.automation_enabled[PATROL_ACTION_KEY] = True
     state.units[UnitType.CAPTAIN] = 1
     state.units[UnitType.SOLDIER] = 3
     state.resources[ResourceType.FOOD] = 10.5
@@ -232,6 +236,59 @@ def test_tick_runs_automatic_patrol_when_captain_and_requirements_are_ready(
 
     assert calls == [state]
     assert state.last_action_message == "Automatic patrol ran."
+
+
+def test_default_automation_values() -> None:
+    state = GameState()
+
+    assert state.automation_enabled[HUNT_ACTION_KEY] is True
+    assert state.automation_enabled[PATROL_ACTION_KEY] is False
+    assert state.automation_enabled[DEFEND_ACTION_KEY] is True
+
+
+def test_tick_does_not_auto_hunt_when_automation_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GameState()
+    state.automation_enabled[HUNT_ACTION_KEY] = False
+    state.units[UnitType.RANGER] = 1
+    state.units[UnitType.SOLDIER] = 1
+    calls = []
+
+    def fake_hunt(hunt_state: GameState) -> None:
+        calls.append(hunt_state)
+
+    monkeypatch.setattr("shellcromancer.economy.hunt", fake_hunt)
+
+    tick(state)
+
+    assert calls == []
+
+
+def test_auto_patrol_default_off_never_spends_food() -> None:
+    state = GameState()
+    state.units[UnitType.CAPTAIN] = 1
+    state.units[UnitType.SOLDIER] = 3
+    state.resources[ResourceType.FOOD] = 20.0
+
+    run_automatic_patrol(state)
+
+    assert state.resources[ResourceType.FOOD] == pytest.approx(20.0)
+    assert state.action_cooldowns[PATROL_ACTION_KEY] == pytest.approx(0.0)
+
+
+def test_manual_patrol_still_runs_when_automation_is_disabled() -> None:
+    state = GameState()
+    state.automation_enabled[PATROL_ACTION_KEY] = False
+    state.units[UnitType.CAPTAIN] = 1
+    state.units[UnitType.SOLDIER] = 3
+    state.resources[ResourceType.FOOD] = 20.0
+
+    result = patrol(state, roll=0.30)
+
+    assert result.success is True
+    assert state.resources[ResourceType.FOOD] == pytest.approx(10.0)
+    assert state.action_cooldowns[PATROL_ACTION_KEY] > 0
 
 
 def test_tick_does_not_auto_hunt_without_hunt_prerequisites(
@@ -287,6 +344,46 @@ def test_tick_does_not_advance_run_timer_after_death() -> None:
     tick(state)
 
     assert state.run_elapsed_seconds == pytest.approx(0.0)
+
+
+def test_tick_does_not_run_automation_after_death(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GameState()
+    state.is_dead = True
+    state.units[UnitType.RANGER] = 1
+    state.units[UnitType.SOLDIER] = 1
+    calls = []
+
+    def fake_hunt(hunt_state: GameState) -> None:
+        calls.append(hunt_state)
+
+    monkeypatch.setattr("shellcromancer.economy.hunt", fake_hunt)
+
+    tick(state)
+
+    assert calls == []
+
+
+def test_manual_hunt_cooldown_blocks_automatic_hunt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GameState()
+    state.units[UnitType.RANGER] = 1
+    state.units[UnitType.SOLDIER] = 1
+
+    hunt(state, roll=0.50)
+    calls = []
+
+    def fake_hunt(hunt_state: GameState) -> None:
+        calls.append(hunt_state)
+
+    monkeypatch.setattr("shellcromancer.economy.hunt", fake_hunt)
+
+    tick(state)
+
+    assert calls == []
+    assert state.action_cooldowns[HUNT_ACTION_KEY] == pytest.approx(59.0)
 
 
 def test_tick_adds_threat_when_roll_timer_expires(
@@ -402,6 +499,7 @@ def test_tick_does_not_auto_patrol_without_captain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     state = GameState()
+    state.automation_enabled[PATROL_ACTION_KEY] = True
     state.units[UnitType.SOLDIER] = 3
     state.resources[ResourceType.FOOD] = 10.5
     calls = []
@@ -420,6 +518,7 @@ def test_tick_does_not_auto_patrol_until_cooldown_is_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     state = GameState()
+    state.automation_enabled[PATROL_ACTION_KEY] = True
     state.units[UnitType.CAPTAIN] = 1
     state.units[UnitType.SOLDIER] = 3
     state.resources[ResourceType.FOOD] = 10.5
@@ -479,6 +578,42 @@ def test_tick_auto_defends_when_watchpost_is_ready(
     assert calls == [state]
 
 
+def test_tick_does_not_auto_defend_without_catapult(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GameState()
+    state.units[UnitType.WATCHPOST] = 1
+    state.active_threats.append(ActiveThreat(key="goblin_raid", remaining_seconds=60.0))
+    calls = []
+
+    def fake_defend(defend_state: GameState) -> None:
+        calls.append(defend_state)
+
+    monkeypatch.setattr("shellcromancer.economy.defend", fake_defend)
+
+    tick(state)
+
+    assert calls == []
+
+
+def test_tick_does_not_auto_defend_without_active_threat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GameState()
+    state.units[UnitType.WATCHPOST] = 1
+    state.buildings[BuildingType.CATAPULT] = 1
+    calls = []
+
+    def fake_defend(defend_state: GameState) -> None:
+        calls.append(defend_state)
+
+    monkeypatch.setattr("shellcromancer.economy.defend", fake_defend)
+
+    tick(state)
+
+    assert calls == []
+
+
 def test_tick_does_not_auto_defend_without_watchpost(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -522,6 +657,7 @@ def test_tick_does_not_auto_patrol_without_patrol_prerequisites(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     state = GameState()
+    state.automation_enabled[PATROL_ACTION_KEY] = True
     state.units[UnitType.CAPTAIN] = 1
     state.units[UnitType.SOLDIER] = 2
     state.resources[ResourceType.FOOD] = 0.0

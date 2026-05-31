@@ -6,6 +6,7 @@ from shellcromancer.actions import (
     DEFEND_ACTION_KEY,
     EXPEDITION_ACTION_KEY,
     HUNT_ACTION_KEY,
+    PATROL_ACTION_KEY,
 )
 from shellcromancer.buildings import BuildingType
 from shellcromancer.game_state import GameState, record_action_message
@@ -29,6 +30,8 @@ def test_save_and_load_state_round_trip(tmp_path) -> None:
     state.units[UnitType.SOLDIER] = 2
     state.buildings[BuildingType.FARM] = 3
     state.action_cooldowns[HUNT_ACTION_KEY] = 12.0
+    state.automation_enabled[HUNT_ACTION_KEY] = False
+    state.automation_enabled[PATROL_ACTION_KEY] = True
     state.last_delta[ResourceType.FOOD] = -0.4
     record_action_message(state, "First stored event.")
     record_action_message(state, "Second stored event.")
@@ -46,6 +49,9 @@ def test_save_and_load_state_round_trip(tmp_path) -> None:
     assert loaded.units[UnitType.SOLDIER] == 2
     assert loaded.buildings[BuildingType.FARM] == 3
     assert loaded.action_cooldowns[HUNT_ACTION_KEY] == pytest.approx(12.0)
+    assert loaded.automation_enabled[HUNT_ACTION_KEY] is False
+    assert loaded.automation_enabled[PATROL_ACTION_KEY] is True
+    assert loaded.automation_enabled[DEFEND_ACTION_KEY] is True
     assert loaded.last_delta[ResourceType.FOOD] == pytest.approx(-0.4)
     assert loaded.last_action_message == "Stored state."
     assert loaded.action_history == [
@@ -123,6 +129,9 @@ def test_state_from_dict_fills_missing_fields_with_defaults() -> None:
     assert state.action_cooldowns[HUNT_ACTION_KEY] == pytest.approx(0.0)
     assert state.action_cooldowns[EXPEDITION_ACTION_KEY] == pytest.approx(0.0)
     assert state.action_cooldowns[DEFEND_ACTION_KEY] == pytest.approx(0.0)
+    assert state.automation_enabled[HUNT_ACTION_KEY] is True
+    assert state.automation_enabled[PATROL_ACTION_KEY] is False
+    assert state.automation_enabled[DEFEND_ACTION_KEY] is True
     assert state.active_threats == []
     assert state.threat_roll_cooldown == pytest.approx(600.0)
     assert state.run_elapsed_seconds == pytest.approx(0.0)
@@ -146,6 +155,14 @@ def test_action_history_is_limited_to_twenty_five_entries() -> None:
     assert data["action_history"] == [f"Entry {index}" for index in range(5, 30)]
     assert loaded.action_history == [f"Entry {index}" for index in range(5, 30)]
     assert loaded.last_action_message == "Entry 29"
+
+
+def test_state_from_dict_loads_partial_automation_enabled_with_defaults() -> None:
+    state = state_from_dict({"automation_enabled": {"hunt": False}})
+
+    assert state.automation_enabled[HUNT_ACTION_KEY] is False
+    assert state.automation_enabled[PATROL_ACTION_KEY] is False
+    assert state.automation_enabled[DEFEND_ACTION_KEY] is True
 
 
 def test_state_from_dict_ignores_unknown_threats() -> None:
@@ -185,3 +202,8 @@ def test_save_file_uses_enum_values_as_keys(tmp_path) -> None:
     assert "active_threats" in data
     assert "threat_roll_cooldown" in data
     assert "action_history" in data
+    assert data["automation_enabled"] == {
+        "defend": True,
+        "hunt": True,
+        "patrol": False,
+    }

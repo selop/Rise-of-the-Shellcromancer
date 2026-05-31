@@ -38,6 +38,7 @@ def state_to_dict(state: GameState) -> dict[str, object]:
             building.value: count for building, count in state.buildings.items()
         },
         "action_cooldowns": dict(state.action_cooldowns),
+        "automation_enabled": dict(state.automation_enabled),
         "active_threats": [
             {
                 "key": active_threat.key,
@@ -72,6 +73,9 @@ def state_from_dict(data: dict[str, object]) -> GameState:
         ),
         action_cooldowns=_string_float_mapping(
             data.get("action_cooldowns"), default_state.action_cooldowns
+        ),
+        automation_enabled=_string_bool_mapping(
+            data.get("automation_enabled"), default_state.automation_enabled
         ),
         active_threats=_active_threats(data.get("active_threats")),
         threat_roll_cooldown=_float_or_default(
@@ -174,6 +178,19 @@ def _string_float_mapping(
     for key, value in raw_value.items():
         if isinstance(key, str):
             values[key] = _float_or_default(value, values.get(key, 0.0))
+    return values
+
+
+def _string_bool_mapping(
+    raw_value: object, defaults: dict[str, bool]
+) -> dict[str, bool]:
+    values = defaults.copy()
+    if not isinstance(raw_value, dict):
+        return values
+
+    for key, value in raw_value.items():
+        if isinstance(key, str) and isinstance(value, bool):
+            values[key] = value
     return values
 
 

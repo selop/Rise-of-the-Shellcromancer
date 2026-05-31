@@ -17,8 +17,12 @@ from textual.widgets import (
 
 from shellcromancer import actions
 from shellcromancer.buildings import BUILDING_DEFINITIONS, BuildingType
-from shellcromancer.economy import mark_dead_if_food_depleted, tick
-from shellcromancer.game_state import GameState
+from shellcromancer.economy import (
+    has_automation_enabler,
+    mark_dead_if_food_depleted,
+    tick,
+)
+from shellcromancer.game_state import GameState, record_action_message
 from shellcromancer.persistence import load_state, save_state
 from shellcromancer.resources import ALL_RESOURCES, ResourceType
 from shellcromancer.storage import is_resource_capped, resource_capacity
@@ -223,6 +227,21 @@ ONE_TIME_ACTIONS = (
 MENU_COLUMNS = (UNIT_ACTIONS, BUILDING_ACTIONS, ONE_TIME_ACTIONS)
 MENU_ACTIONS = tuple(action for column in MENU_COLUMNS for action in column)
 SHOP_COLUMN_LABELS = ("Units", "Buildings", "Actions")
+AUTOMATED_ACTION_LABELS = {
+    "Hunt": actions.HUNT_ACTION_KEY,
+    "Patrol": actions.PATROL_ACTION_KEY,
+    "Defend": actions.DEFEND_ACTION_KEY,
+}
+AUTOMATED_ACTION_NAMES = {
+    actions.HUNT_ACTION_KEY: "Hunt",
+    actions.PATROL_ACTION_KEY: "Patrol",
+    actions.DEFEND_ACTION_KEY: "Defend",
+}
+AUTOMATION_ENABLE_REQUIREMENTS = {
+    actions.HUNT_ACTION_KEY: "Need a ranger to enable Auto Hunt.",
+    actions.PATROL_ACTION_KEY: "Need a captain to enable Auto Patrol.",
+    actions.DEFEND_ACTION_KEY: "Need a watchpost to enable Auto Defend.",
+}
 
 
 class ShellcromancerApp(App[None]):
@@ -291,6 +310,7 @@ class ShellcromancerApp(App[None]):
         Binding("left,h", "select_left", "Previous column", priority=True),
         Binding("right", "select_right", "Next column", priority=True),
         Binding("enter", "execute_selected", "Use selected", priority=True),
+        Binding("a", "toggle_automation", "Toggle automation", priority=True),
         Binding("s", "show_scribe", "Scribe"),
         Binding("r", "show_reign", "Reign"),
         Binding("b", "show_battle", "Battle"),
@@ -391,6 +411,37 @@ class ShellcromancerApp(App[None]):
 
         selected_action(self.selected_action_index).run(self.state)
         mark_dead_if_food_depleted(self.state)
+        save_state(self.state, self.save_path)
+        self._refresh_view()
+
+    def action_toggle_automation(self) -> None:
+        if self.state.is_dead:
+            self._refresh_view()
+            return
+
+        action_key = automation_key_for_action(
+            selected_action(self.selected_action_index)
+        )
+        if action_key is None:
+            self._refresh_view()
+            return
+
+        is_currently_enabled = self.state.automation_enabled.get(action_key, False)
+        is_enabled = not is_currently_enabled
+        if is_enabled and not has_automation_enabler(self.state, action_key):
+            record_action_message(
+                self.state, AUTOMATION_ENABLE_REQUIREMENTS[action_key]
+            )
+            save_state(self.state, self.save_path)
+            self._refresh_view()
+            return
+
+        self.state.automation_enabled[action_key] = is_enabled
+        action_name = AUTOMATED_ACTION_NAMES[action_key]
+        enabled_label = "enabled" if is_enabled else "disabled"
+        record_action_message(
+            state=self.state, message=f"Auto {action_name} {enabled_label}."
+        )
         save_state(self.state, self.save_path)
         self._refresh_view()
 
@@ -571,13 +622,15 @@ def action_status_label(state: GameState, menu_action: MenuAction) -> str:
 
 
 def action_display_label(state: GameState, menu_action: MenuAction) -> str:
-    if menu_action.label == "Hunt" and state.units[UnitType.RANGER] >= 1:
-        return "Hunt (A)"
-    if menu_action.label == "Patrol" and state.units[UnitType.CAPTAIN] >= 1:
-        return "Patrol (A)"
-    if menu_action.label == "Defend" and state.units[UnitType.WATCHPOST] >= 1:
-        return "Defend (A)"
+    action_key = automation_key_for_action(menu_action)
+    if action_key is not None and has_automation_enabler(state, action_key):
+        mode = "A" if state.automation_enabled.get(action_key, False) else "M"
+        return f"{menu_action.label} ({mode})"
     return menu_action.label
+
+
+def automation_key_for_action(menu_action: MenuAction) -> str | None:
+    return AUTOMATED_ACTION_LABELS.get(menu_action.label)
 
 
 def format_quantity(amount: float | int) -> str:

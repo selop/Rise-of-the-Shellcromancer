@@ -435,9 +435,19 @@ def test_render_state_shows_patrol_cooldown_behind_action() -> None:
     assert "Cooldown 1:59" in rendered
 
 
-def test_render_state_marks_patrol_automated_with_captain() -> None:
+def test_render_state_marks_patrol_manual_with_captain_and_automation_off() -> None:
     state = GameState()
     state.units[UnitType.CAPTAIN] = 1
+
+    rendered = render_state(state, selected_action_index=action_index(2, 1))
+
+    assert "Patrol (M)" in rendered
+
+
+def test_render_state_marks_patrol_automated_with_captain_and_automation_on() -> None:
+    state = GameState()
+    state.units[UnitType.CAPTAIN] = 1
+    state.automation_enabled[PATROL_ACTION_KEY] = True
 
     rendered = render_state(state, selected_action_index=action_index(2, 1))
 
@@ -493,6 +503,67 @@ def test_render_state_marks_defend_automated_with_watchpost() -> None:
     rendered = render_state(state, selected_action_index=action_index(2, 4))
 
     assert "Defend (A)" in rendered
+
+
+def test_render_state_hides_automation_marker_until_enabler_exists() -> None:
+    state = GameState()
+    state.automation_enabled[PATROL_ACTION_KEY] = True
+
+    rendered = render_state(state, selected_action_index=action_index(2, 1))
+
+    assert "Hunt (A)" not in rendered
+    assert "Patrol (A)" not in rendered
+    assert "Patrol (M)" not in rendered
+    assert "Defend (A)" not in rendered
+    assert "Patrol" in rendered
+
+
+def test_toggle_automation_flips_selected_action_and_logs(tmp_path) -> None:
+    app = ShellcromancerApp(save_path=tmp_path / "save.json")
+    app.state.units[UnitType.CAPTAIN] = 1
+    app.selected_action_index = action_index(2, 1)
+
+    app.action_toggle_automation()
+
+    assert app.state.automation_enabled[PATROL_ACTION_KEY] is True
+    assert app.state.last_action_message == "Auto Patrol enabled."
+
+    app.action_toggle_automation()
+
+    assert app.state.automation_enabled[PATROL_ACTION_KEY] is False
+    assert app.state.last_action_message == "Auto Patrol disabled."
+
+
+def test_toggle_automation_cannot_enable_before_enabler_exists(tmp_path) -> None:
+    app = ShellcromancerApp(save_path=tmp_path / "save.json")
+    app.selected_action_index = action_index(2, 1)
+
+    app.action_toggle_automation()
+
+    assert app.state.automation_enabled[PATROL_ACTION_KEY] is False
+    assert app.state.last_action_message == "Need a captain to enable Auto Patrol."
+
+
+def test_toggle_automation_can_disable_after_enabler_is_lost(tmp_path) -> None:
+    app = ShellcromancerApp(save_path=tmp_path / "save.json")
+    app.state.automation_enabled[PATROL_ACTION_KEY] = True
+    app.state.units[UnitType.CAPTAIN] = 0
+    app.selected_action_index = action_index(2, 1)
+
+    app.action_toggle_automation()
+
+    assert app.state.automation_enabled[PATROL_ACTION_KEY] is False
+    assert app.state.last_action_message == "Auto Patrol disabled."
+
+
+def test_toggle_automation_ignores_non_automated_action(tmp_path) -> None:
+    app = ShellcromancerApp(save_path=tmp_path / "save.json")
+    app.selected_action_index = action_index(2, 2)
+
+    app.action_toggle_automation()
+
+    assert app.state.last_action_message == "Welcome, Shellcromancer."
+    assert app.state.action_history == ["Welcome, Shellcromancer."]
 
 
 def test_render_state_shows_defend_success_chance_range() -> None:
@@ -659,11 +730,17 @@ def test_reset_starts_new_run_and_saves_state(tmp_path) -> None:
     app = ShellcromancerApp(save_path=save_path)
     app.state.is_dead = True
     app.state.resources[ResourceType.FOOD] = 0.0
+    app.state.automation_enabled[HUNT_ACTION_KEY] = False
+    app.state.automation_enabled[PATROL_ACTION_KEY] = True
+    app.state.automation_enabled[DEFEND_ACTION_KEY] = False
 
     app.action_reset()
 
     assert app.state.is_dead is False
     assert app.state.resources[ResourceType.FOOD] == 10.0
+    assert app.state.automation_enabled[HUNT_ACTION_KEY] is True
+    assert app.state.automation_enabled[PATROL_ACTION_KEY] is False
+    assert app.state.automation_enabled[DEFEND_ACTION_KEY] is True
     assert save_path.exists()
 
 

@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from shellcromancer.buildings import BUILDING_DEFINITIONS, BuildingType
 from shellcromancer.actions import (
     DEFEND_ACTION_KEY,
@@ -28,6 +30,46 @@ BASE_RESOURCE_TYPES = (
     ResourceType.SHELL,
 )
 DEATH_MESSAGE = "The stores are empty. You starved, and the shellhost falls silent."
+
+
+@dataclass(frozen=True)
+class AutomatedAction:
+    action_key: str
+    unit_enablers: dict[UnitType, int]
+    building_enablers: dict[BuildingType, int]
+    unit_requirements: dict[UnitType, int]
+    building_requirements: dict[BuildingType, int]
+    resource_requirements: dict[ResourceType, float]
+    requires_active_threat: bool = False
+
+
+AUTOMATED_ACTIONS = {
+    HUNT_ACTION_KEY: AutomatedAction(
+        action_key=HUNT_ACTION_KEY,
+        unit_enablers={UnitType.RANGER: 1},
+        building_enablers={},
+        unit_requirements={UnitType.SOLDIER: 1},
+        building_requirements={},
+        resource_requirements={},
+    ),
+    PATROL_ACTION_KEY: AutomatedAction(
+        action_key=PATROL_ACTION_KEY,
+        unit_enablers={UnitType.CAPTAIN: 1},
+        building_enablers={},
+        unit_requirements={UnitType.SOLDIER: 3},
+        building_requirements={},
+        resource_requirements={ResourceType.FOOD: 10.0},
+    ),
+    DEFEND_ACTION_KEY: AutomatedAction(
+        action_key=DEFEND_ACTION_KEY,
+        unit_enablers={UnitType.WATCHPOST: 1},
+        building_enablers={},
+        unit_requirements={},
+        building_requirements={BuildingType.CATAPULT: 1},
+        resource_requirements={},
+        requires_active_threat=True,
+    ),
+}
 
 
 def calculate_delta(state: GameState) -> dict[ResourceType, float]:
@@ -75,41 +117,80 @@ def reduce_cooldowns(state: GameState, elapsed_seconds: float = 1.0) -> None:
         state.action_cooldowns[action_key] = max(0.0, remaining - elapsed_seconds)
 
 
-def run_automatic_hunt(state: GameState) -> None:
-    if state.units[UnitType.RANGER] < 1:
-        return
-    if state.action_cooldowns.get(HUNT_ACTION_KEY, 0.0) > 0:
-        return
-    if state.units[UnitType.SOLDIER] < 1:
-        return
+def has_automation_enabler(state: GameState, action_key: str) -> bool:
+    automated_action = AUTOMATED_ACTIONS[action_key]
+    return _has_units(state, automated_action.unit_enablers) and _has_buildings(
+        state, automated_action.building_enablers
+    )
 
-    hunt(state)
+
+def action_prerequisites_met(state: GameState, action_key: str) -> bool:
+    automated_action = AUTOMATED_ACTIONS[action_key]
+    if not _has_units(state, automated_action.unit_requirements):
+        return False
+    if not _has_buildings(state, automated_action.building_requirements):
+        return False
+    if not _has_resources(state, automated_action.resource_requirements):
+        return False
+    return not automated_action.requires_active_threat or bool(state.active_threats)
+
+
+def should_run_automated_action(state: GameState, action_key: str) -> bool:
+    return (
+        not state.is_dead
+        and state.automation_enabled.get(action_key, False)
+        and has_automation_enabler(state, action_key)
+        and state.action_cooldowns.get(action_key, 0.0) <= 0
+        and action_prerequisites_met(state, action_key)
+    )
+
+
+def run_automatic_action(state: GameState, action_key: str) -> None:
+    if should_run_automated_action(state, action_key):
+        _run_automated_action(state, action_key)
+
+
+def run_automatic_hunt(state: GameState) -> None:
+    run_automatic_action(state, HUNT_ACTION_KEY)
 
 
 def run_automatic_patrol(state: GameState) -> None:
-    if state.units[UnitType.CAPTAIN] < 1:
-        return
-    if state.action_cooldowns.get(PATROL_ACTION_KEY, 0.0) > 0:
-        return
-    if state.units[UnitType.SOLDIER] < 3:
-        return
-    if state.resources[ResourceType.FOOD] < 10.0:
-        return
-
-    patrol(state)
+    run_automatic_action(state, PATROL_ACTION_KEY)
 
 
 def run_automatic_defend(state: GameState) -> None:
-    if state.units[UnitType.WATCHPOST] < 1:
-        return
-    if state.action_cooldowns.get(DEFEND_ACTION_KEY, 0.0) > 0:
-        return
-    if state.buildings[BuildingType.CATAPULT] < 1:
-        return
-    if not state.active_threats:
-        return
+    run_automatic_action(state, DEFEND_ACTION_KEY)
 
-    defend(state)
+
+def _has_units(state: GameState, requirements: dict[UnitType, int]) -> bool:
+    return all(state.units[unit] >= amount for unit, amount in requirements.items())
+
+
+def _has_buildings(
+    state: GameState, requirements: dict[BuildingType, int]
+) -> bool:
+    return all(
+        state.buildings[building] >= amount
+        for building, amount in requirements.items()
+    )
+
+
+def _has_resources(
+    state: GameState, requirements: dict[ResourceType, float]
+) -> bool:
+    return all(
+        state.resources[resource] >= amount
+        for resource, amount in requirements.items()
+    )
+
+
+def _run_automated_action(state: GameState, action_key: str) -> None:
+    if action_key == HUNT_ACTION_KEY:
+        hunt(state)
+    elif action_key == PATROL_ACTION_KEY:
+        patrol(state)
+    elif action_key == DEFEND_ACTION_KEY:
+        defend(state)
 
 
 def update_threats(state: GameState, elapsed_seconds: float = 1.0) -> None:
