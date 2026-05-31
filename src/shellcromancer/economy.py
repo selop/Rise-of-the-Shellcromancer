@@ -9,6 +9,7 @@ from shellcromancer.actions import (
 )
 from shellcromancer.game_state import GameState, empty_delta, record_action_message
 from shellcromancer.resources import ResourceType
+from shellcromancer.storage import add_resource
 from shellcromancer.threats import (
     THREAT_ROLL_SECONDS,
     active_threat_name,
@@ -54,7 +55,7 @@ def calculate_delta(state: GameState) -> dict[ResourceType, float]:
 
 def apply_delta(state: GameState, delta: dict[ResourceType, float]) -> None:
     for resource, amount in delta.items():
-        state.resources[resource] = max(0.0, state.resources[resource] + amount)
+        add_resource(state, resource, amount)
     state.last_delta = delta.copy()
     mark_dead_if_food_depleted(state)
 

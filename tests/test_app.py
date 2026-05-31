@@ -15,6 +15,8 @@ from shellcromancer.app import (
     ShellcromancerApp,
     action_status_style,
     action_index,
+    format_action_cost,
+    format_action_requirements,
     is_action_affordable,
     render_state,
 )
@@ -62,6 +64,7 @@ def test_render_state_lists_units_buildings_and_actions() -> None:
     assert "Sorcerer" in rendered
     assert "Arcane Tower" in rendered
     assert "Catapult" in rendered
+    assert "Storage" in rendered
     assert "Kindle the Pyre" in rendered
     assert "Defend" in rendered
 
@@ -80,6 +83,7 @@ def test_menu_includes_new_units_buildings_and_actions() -> None:
     assert "Sorcerer" in labels
     assert "Arcane Tower" in labels
     assert "Catapult" in labels
+    assert "Storage" in labels
     assert "Kindle the Pyre" in labels
     assert "Defend" in labels
 
@@ -87,8 +91,27 @@ def test_menu_includes_new_units_buildings_and_actions() -> None:
 def test_render_state_shows_gold_resource() -> None:
     rendered = render_state(GameState())
 
-    assert "gold      0.0   (+0.0/s)" in rendered
+    assert "gold       0.0 / 100.0   (+0.0/s)" in rendered
 
+
+
+def test_render_state_shows_resource_capacity_and_capped_status() -> None:
+    state = GameState()
+    state.resources[ResourceType.SHELL] = 100.0
+    state.last_delta[ResourceType.SHELL] = 0.1
+
+    rendered = render_state(state)
+
+    assert "shell    100.0 / 100.0   (+0.1/s (capped))" in rendered
+
+
+def test_render_state_storage_increases_resource_capacity() -> None:
+    state = GameState()
+    state.buildings[BuildingType.STORAGE] = 2
+
+    rendered = render_state(state)
+
+    assert "wood      10.0 / 300.0" in rendered
 
 def test_render_state_shows_active_threats_and_encyclopedia() -> None:
     state = GameState()
@@ -120,6 +143,7 @@ def test_app_uses_scribe_reign_and_battle_tabs(tmp_path) -> None:
 
             assert tabs.active == "scribe-tab"
             assert resource_table.row_count == len(ResourceType)
+            assert resource_table.get_row_at(0) == ["wood", "10.0 / 100.0", "+0.0/s"]
             assert unit_table.row_count == len(UnitType)
             assert building_table.row_count == len(BuildingType)
             assert unit_table.get_row_at(0) == ["Worker", "0"]
@@ -325,6 +349,16 @@ def test_render_state_splits_resource_costs_from_requirements() -> None:
         "Requirements: 1 sorcerer, 1 arcane tower, cooldown ready"
         in kindle_rendered
     )
+
+
+def test_render_state_shows_scaled_storage_cost() -> None:
+    state = GameState()
+    state.buildings[BuildingType.STORAGE] = 1
+
+    rendered = render_state(state, selected_action_index=action_index(1, 5))
+
+    assert "Cost: 100 wood, 50 stone" in rendered
+    assert "Requirements: 2 workers" in rendered
 
 
 def test_selected_panel_splits_costs_and_requirements(tmp_path) -> None:
@@ -568,6 +602,32 @@ def test_arcane_tower_affordability_requires_sorcerer_and_stone() -> None:
 
     state.resources[ResourceType.STONE] = 249.9
     assert is_action_affordable(state, arcane_tower) is False
+
+
+def test_storage_affordability_uses_scaled_cost() -> None:
+    state = GameState()
+    state.buildings[BuildingType.STORAGE] = 1
+    state.resources[ResourceType.WOOD] = 100.0
+    state.resources[ResourceType.STONE] = 50.0
+    storage = next(action for action in MENU_ACTIONS if action.label == "Storage")
+
+    state.units[UnitType.WORKER] = 1
+    assert is_action_affordable(state, storage) is False
+
+    state.units[UnitType.WORKER] = 2
+    assert is_action_affordable(state, storage) is True
+
+    state.resources[ResourceType.WOOD] = 99.9
+    assert is_action_affordable(state, storage) is False
+
+
+def test_storage_formatters_use_scaled_cost_when_state_is_given() -> None:
+    state = GameState()
+    state.buildings[BuildingType.STORAGE] = 2
+    storage = next(action for action in MENU_ACTIONS if action.label == "Storage")
+
+    assert format_action_cost(storage, state) == "150 wood, 75 stone"
+    assert format_action_requirements(storage, state) == "3 workers"
 
 
 def test_dead_state_renders_game_over_and_restart_key() -> None:

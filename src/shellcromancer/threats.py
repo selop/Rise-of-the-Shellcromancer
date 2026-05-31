@@ -119,6 +119,10 @@ def resolve_threat(state: object, active_threat: ActiveThreat) -> str:
         state.buildings[definition.target_building],
     )
     state.buildings[definition.target_building] -= destroyed
+
+    from shellcromancer.storage import clamp_all_resources
+
+    clamp_all_resources(state)
     target_name = definition.target_building.value.replace("_", " ")
     if destroyed == 0:
         return f"{definition.name} struck, but found no {target_name} to destroy."

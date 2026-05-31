@@ -10,6 +10,7 @@ from shellcromancer.game_state import (
     record_action_message,
 )
 from shellcromancer.resources import ResourceType
+from shellcromancer.storage import clamp_all_resources
 from shellcromancer.threats import THREAT_DEFINITIONS, THREAT_ROLL_SECONDS, ActiveThreat
 from shellcromancer.units import UnitType
 
@@ -102,6 +103,7 @@ def state_from_dict(data: dict[str, object]) -> GameState:
     state.run_elapsed_seconds = _float_or_default(
         data.get("run_elapsed_seconds"), default_state.run_elapsed_seconds
     )
+    clamp_all_resources(state)
     return state
 
 

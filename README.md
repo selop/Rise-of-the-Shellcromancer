@@ -88,6 +88,15 @@ Per-second economy:
 - each mine: +0.2 iron
 - each quarry: +0.2 stone
 - each arcane tower: +0.1 shell
+- storage buildings do not produce resources; each one raises every resource
+  capacity by 100
+
+Resource capacity:
+
+- each resource has a base capacity of 100
+- each Storage building adds +100 capacity to every resource
+- positive passive production and action rewards are discarded above capacity
+- spending and negative production still reduce resources normally
 
 One-time actions:
 
@@ -132,6 +141,9 @@ Sorcery and siege:
 - Sorcerer: costs 1 soldier and 50 shell.
 - Arcane Tower: costs 1 sorcerer and 250 stone.
 - Catapult: costs 5 gold, 100 wood, and 200 stone.
+- Storage: costs scale by the next Storage number: 1st costs 1 worker, 50 wood,
+  and 25 stone; 2nd costs 2 workers, 100 wood, and 50 stone; adds +100 capacity
+  to every resource.
 
 Threats:
 
@@ -157,7 +169,8 @@ run ends, and the game opens to the saved game-over state until restarted.
 ## Current Scope
 
 This prototype includes resource production, worker creation, worker upgrades,
-farm, mine, and quarry construction, persistent saves, food-based game over,
+farm, mine, quarry, and storage construction, resource capacity limits,
+persistent saves, food-based game over,
 threat countdowns, defensive catapults, an encyclopedia, a keyboard-first TUI,
 and placeholder PvE target data in code for later work. Attack planning and
 progression systems are intentionally out of scope for the initial commit.
