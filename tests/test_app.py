@@ -15,6 +15,8 @@ from shellcromancer.app import (
     ShellcromancerApp,
     action_status_style,
     action_index,
+    format_action_cost,
+    format_action_requirements,
     is_action_affordable,
     render_state,
 )
@@ -349,6 +351,16 @@ def test_render_state_splits_resource_costs_from_requirements() -> None:
     )
 
 
+def test_render_state_shows_scaled_storage_cost() -> None:
+    state = GameState()
+    state.buildings[BuildingType.STORAGE] = 1
+
+    rendered = render_state(state, selected_action_index=action_index(1, 5))
+
+    assert "Cost: 100 wood, 50 stone" in rendered
+    assert "Requirements: 2 workers" in rendered
+
+
 def test_selected_panel_splits_costs_and_requirements(tmp_path) -> None:
     async def run_app() -> None:
         app = ShellcromancerApp(save_path=tmp_path / "save.json")
@@ -590,6 +602,32 @@ def test_arcane_tower_affordability_requires_sorcerer_and_stone() -> None:
 
     state.resources[ResourceType.STONE] = 249.9
     assert is_action_affordable(state, arcane_tower) is False
+
+
+def test_storage_affordability_uses_scaled_cost() -> None:
+    state = GameState()
+    state.buildings[BuildingType.STORAGE] = 1
+    state.resources[ResourceType.WOOD] = 100.0
+    state.resources[ResourceType.STONE] = 50.0
+    storage = next(action for action in MENU_ACTIONS if action.label == "Storage")
+
+    state.units[UnitType.WORKER] = 1
+    assert is_action_affordable(state, storage) is False
+
+    state.units[UnitType.WORKER] = 2
+    assert is_action_affordable(state, storage) is True
+
+    state.resources[ResourceType.WOOD] = 99.9
+    assert is_action_affordable(state, storage) is False
+
+
+def test_storage_formatters_use_scaled_cost_when_state_is_given() -> None:
+    state = GameState()
+    state.buildings[BuildingType.STORAGE] = 2
+    storage = next(action for action in MENU_ACTIONS if action.label == "Storage")
+
+    assert format_action_cost(storage, state) == "150 wood, 75 stone"
+    assert format_action_requirements(storage, state) == "3 workers"
 
 
 def test_dead_state_renders_game_over_and_restart_key() -> None:

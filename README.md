@@ -141,8 +141,9 @@ Sorcery and siege:
 - Sorcerer: costs 1 soldier and 50 shell.
 - Arcane Tower: costs 1 sorcerer and 250 stone.
 - Catapult: costs 5 gold, 100 wood, and 200 stone.
-- Storage: costs 1 worker, 50 wood, and 25 stone; adds +100 capacity to every
-  resource.
+- Storage: costs scale by the next Storage number: 1st costs 1 worker, 50 wood,
+  and 25 stone; 2nd costs 2 workers, 100 wood, and 50 stone; adds +100 capacity
+  to every resource.
 
 Threats:
 

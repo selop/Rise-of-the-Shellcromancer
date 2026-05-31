@@ -13,10 +13,12 @@ def resource_capacity(state: GameState, resource: ResourceType) -> float:
     )
 
 
-def add_resource(state: GameState, resource: ResourceType, amount: float) -> None:
+def add_resource(state: GameState, resource: ResourceType, amount: float) -> float:
     capacity = resource_capacity(state, resource)
     current = state.resources[resource]
-    state.resources[resource] = max(0.0, min(current + amount, capacity))
+    new_amount = max(0.0, min(current + amount, capacity))
+    state.resources[resource] = new_amount
+    return new_amount - current
 
 
 def clamp_resource(state: GameState, resource: ResourceType) -> None:

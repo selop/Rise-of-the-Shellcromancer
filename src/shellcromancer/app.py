@@ -464,8 +464,8 @@ class ShellcromancerApp(App[None]):
         readiness = action_status_label(self.state, menu_action)
         self.selected_view.update(
             f"{action_display_label(self.state, menu_action)}: {readiness}\n"
-            f"Cost: {format_action_cost(menu_action)}\n"
-            f"Requirements: {format_action_requirements(menu_action)}"
+            f"Cost: {format_action_cost(menu_action, self.state)}\n"
+            f"Requirements: {format_action_requirements(menu_action, self.state)}"
         )
 
     def _refresh_battle_view(self) -> None:
@@ -494,16 +494,33 @@ class ShellcromancerApp(App[None]):
         )
 
 
+def effective_resource_costs(
+    state: GameState, menu_action: MenuAction
+) -> dict[ResourceType, float]:
+    if menu_action.run is actions.build_storage:
+        return actions.storage_resource_costs(state)
+    return menu_action.resource_costs
+
+
+def effective_unit_costs(
+    state: GameState, menu_action: MenuAction
+) -> dict[UnitType, int]:
+    if menu_action.run is actions.build_storage:
+        return {UnitType.WORKER: actions.storage_worker_cost(state)}
+    return menu_action.unit_costs
+
+
 def is_action_affordable(state: GameState, menu_action: MenuAction) -> bool:
     if state.is_dead:
         return False
 
     has_resources = all(
         state.resources[resource] >= amount
-        for resource, amount in menu_action.resource_costs.items()
+        for resource, amount in effective_resource_costs(state, menu_action).items()
     )
     has_units = all(
-        state.units[unit] >= amount for unit, amount in menu_action.unit_costs.items()
+        state.units[unit] >= amount
+        for unit, amount in effective_unit_costs(state, menu_action).items()
     )
     has_buildings = all(
         state.buildings[building] >= amount
@@ -569,13 +586,18 @@ def format_quantity(amount: float | int) -> str:
     return str(amount)
 
 
-def format_action_cost(menu_action: MenuAction) -> str:
-    if not menu_action.resource_costs:
+def format_action_cost(menu_action: MenuAction, state: GameState | None = None) -> str:
+    resource_costs = (
+        effective_resource_costs(state, menu_action)
+        if state is not None
+        else menu_action.resource_costs
+    )
+    if not resource_costs:
         return "-"
 
     return ", ".join(
         f"{format_quantity(amount)} {resource.value}"
-        for resource, amount in menu_action.resource_costs.items()
+        for resource, amount in resource_costs.items()
     )
 
 
@@ -586,10 +608,17 @@ def format_counted_name(amount: int, singular_name: str) -> str:
     return f"{amount} {name}s"
 
 
-def format_action_requirements(menu_action: MenuAction) -> str:
+def format_action_requirements(
+    menu_action: MenuAction, state: GameState | None = None
+) -> str:
+    unit_costs = (
+        effective_unit_costs(state, menu_action)
+        if state is not None
+        else menu_action.unit_costs
+    )
     requirements = [
         format_counted_name(amount, UNIT_DEFINITIONS[unit].name)
-        for unit, amount in menu_action.unit_costs.items()
+        for unit, amount in unit_costs.items()
     ]
     requirements.extend(
         format_counted_name(amount, BUILDING_DEFINITIONS[building].name)
@@ -710,8 +739,8 @@ def render_state(state: GameState, selected_action_index: int = 0) -> str:
             "",
             "Selected",
             f"{action_display_label(state, menu_action)}: {readiness}",
-            f"Cost: {format_action_cost(menu_action)}",
-            f"Requirements: {format_action_requirements(menu_action)}",
+            f"Cost: {format_action_cost(menu_action, state)}",
+            f"Requirements: {format_action_requirements(menu_action, state)}",
             "",
             "Battle Tab",
             *format_battle_lines(state),
@@ -784,7 +813,7 @@ def format_encyclopedia_lines(state: GameState | None = None) -> list[str]:
     for building_type in BuildingType:
         definition = BUILDING_DEFINITIONS[building_type]
         description = (
-            "adds +100 capacity to every resource"
+            "adds +100 capacity to every resource; next cost scales with Storage owned"
             if building_type is BuildingType.STORAGE
             else f"production {format_rate_map(definition.production)}; upkeep {format_rate_map(definition.upkeep)}"
         )
@@ -796,8 +825,8 @@ def format_encyclopedia_lines(state: GameState | None = None) -> list[str]:
         if state is not None:
             label = action_display_label(state, menu_action)
         lines.append(
-            f"- {label}: cost {format_action_cost(menu_action)}; "
-            f"requirements {format_action_requirements(menu_action)}."
+            f"- {label}: cost {format_action_cost(menu_action, state)}; "
+            f"requirements {format_action_requirements(menu_action, state)}."
         )
 
     lines.extend(["", "Threats"])

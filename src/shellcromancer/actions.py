@@ -31,6 +31,12 @@ DEFEND_BASE_SUCCESS_CHANCE = 0.25
 DEFEND_DEFENDER_SUCCESS_BONUS = 0.10
 DEFEND_MAX_SUCCESS_CHANCE = 0.75
 DEFEND_CATAPULT_BREAK_CHANCE = 0.15
+RESOURCE_OVERFLOW_SUFFIX = " Some reward overflow was discarded."
+STORAGE_BASE_WORKER_COST = 1
+STORAGE_BASE_RESOURCE_COSTS = {
+    ResourceType.WOOD: 50.0,
+    ResourceType.STONE: 25.0,
+}
 
 
 @dataclass(frozen=True)
@@ -63,6 +69,12 @@ def _spend(state: GameState, costs: dict[ResourceType, float]) -> None:
 def _finish(state: GameState, success: bool, message: str) -> ActionResult:
     record_action_message(state, message)
     return ActionResult(success=success, message=message)
+
+
+def _resource_overflow_suffix(*rewards: tuple[float, float]) -> str:
+    if any(nominal > 0 and applied < nominal for nominal, applied in rewards):
+        return RESOURCE_OVERFLOW_SUFFIX
+    return ""
 
 
 def _add_action_threat(
@@ -141,13 +153,44 @@ def build_quarry(state: GameState) -> ActionResult:
     return _build_structure(state, BuildingType.QUARRY, "quarry")
 
 
+def storage_cost_multiplier(state: GameState) -> int:
+    return state.buildings[BuildingType.STORAGE] + 1
+
+
+def storage_worker_cost(state: GameState) -> int:
+    return STORAGE_BASE_WORKER_COST * storage_cost_multiplier(state)
+
+
+def storage_resource_costs(state: GameState) -> dict[ResourceType, float]:
+    multiplier = storage_cost_multiplier(state)
+    return {
+        resource: amount * multiplier
+        for resource, amount in STORAGE_BASE_RESOURCE_COSTS.items()
+    }
+
+
 def build_storage(state: GameState) -> ActionResult:
-    return _build_structure(
-        state,
-        BuildingType.STORAGE,
-        "storage",
-        {ResourceType.WOOD: 50.0, ResourceType.STONE: 25.0},
-    )
+    worker_cost = storage_worker_cost(state)
+    worker_name = "worker" if worker_cost == 1 else "workers"
+    if state.units[UnitType.WORKER] < worker_cost:
+        return _finish(
+            state,
+            False,
+            f"Need at least {worker_cost} {worker_name} to build a storage.",
+        )
+
+    costs = storage_resource_costs(state)
+    can_afford, missing = _can_afford(state, costs)
+    if not can_afford and missing is not None:
+        return _finish(
+            state, False, f"Not enough {_resource_name(missing)} to build a storage."
+        )
+
+    _spend(state, costs)
+    state.units[UnitType.WORKER] -= worker_cost
+    state.buildings[BuildingType.STORAGE] += 1
+    clamp_all_resources(state)
+    return _finish(state, True, "Built storage.")
 
 
 def upgrade_worker_to_soldier(state: GameState) -> ActionResult:
@@ -324,19 +367,21 @@ def hunt(state: GameState, roll: float | None = None) -> ActionResult:
         )
 
     if outcome_roll < 0.80:
-        add_resource(state, ResourceType.FOOD, 5.0)
+        food_added = add_resource(state, ResourceType.FOOD, 5.0)
         return _finish(
             state,
             True,
-            "Hunt result: The soldier returned with fresh game, adding 5 food to the stores.",
+            "Hunt result: The soldier returned with fresh game, adding 5 food to the stores."
+            f"{_resource_overflow_suffix((5.0, food_added))}",
         )
 
-    add_resource(state, ResourceType.FOOD, 5.0)
-    add_resource(state, ResourceType.SHELL, 5.0)
+    food_added = add_resource(state, ResourceType.FOOD, 5.0)
+    shell_added = add_resource(state, ResourceType.SHELL, 5.0)
     return _finish(
         state,
         True,
-        "Hunt result: The soldier found game beside a buried shell cache, gaining 5 food and 5 shell.",
+        "Hunt result: The soldier found game beside a buried shell cache, gaining 5 food and 5 shell."
+        f"{_resource_overflow_suffix((5.0, food_added), (5.0, shell_added))}",
     )
 
 
@@ -403,12 +448,13 @@ def patrol(
 
     if outcome_roll < 0.50:
         reward = randint(1, 10) if gold_reward is None else gold_reward
-        add_resource(state, ResourceType.GOLD, reward)
+        gold_added = add_resource(state, ResourceType.GOLD, reward)
         return _finish(
             state,
             True,
             "Patrol result: The soldiers stormed a bandit hideout "
-            f"under the pines and carried back {reward} gold.",
+            f"under the pines and carried back {reward} gold."
+            f"{_resource_overflow_suffix((reward, gold_added))}",
         )
 
     if outcome_roll < 0.60:
@@ -440,13 +486,14 @@ def patrol(
 
     food = randint(1, 10) if food_reward is None else food_reward
     iron = randint(1, 10) if iron_reward is None else iron_reward
-    add_resource(state, ResourceType.FOOD, food)
-    add_resource(state, ResourceType.IRON, iron)
+    food_added = add_resource(state, ResourceType.FOOD, food)
+    iron_added = add_resource(state, ResourceType.IRON, iron)
     return _finish(
         state,
         True,
         "Patrol result: Found an abandoned merchant cart half-buried in the ditch. "
-        f"The soldiers recovered {food} food and {iron} iron.",
+        f"The soldiers recovered {food} food and {iron} iron."
+        f"{_resource_overflow_suffix((food, food_added), (iron, iron_added))}",
     )
 
 
@@ -503,51 +550,55 @@ def expedition(
         state.units[UnitType.SOLDIER] -= 3
         iron = randint(10, 20) if iron_reward is None else iron_reward
         gold = randint(5, 12) if gold_reward is None else gold_reward
-        add_resource(state, ResourceType.IRON, iron)
-        add_resource(state, ResourceType.GOLD, gold)
+        iron_added = add_resource(state, ResourceType.IRON, iron)
+        gold_added = add_resource(state, ResourceType.GOLD, gold)
         return _finish(
             state,
             True,
             "Expedition result: The survivors dragged home a battered cache "
             "through rain and ruin, "
-            f"losing 3 soldiers but recovering {iron} iron and {gold} gold.",
+            f"losing 3 soldiers but recovering {iron} iron and {gold} gold."
+            f"{_resource_overflow_suffix((iron, iron_added), (gold, gold_added))}",
         )
 
     if outcome_roll < 0.25:
         iron = randint(15, 30) if iron_reward is None else iron_reward
         gold = randint(10, 25) if gold_reward is None else gold_reward
-        add_resource(state, ResourceType.IRON, iron)
-        add_resource(state, ResourceType.GOLD, gold)
+        iron_added = add_resource(state, ResourceType.IRON, iron)
+        gold_added = add_resource(state, ResourceType.GOLD, gold)
         return _finish(
             state,
             True,
             "Expedition result: An ancient armory opened under the captain's "
-            f"seal, its racks still sharp with {iron} iron and {gold} gold.",
+            f"seal, its racks still sharp with {iron} iron and {gold} gold."
+            f"{_resource_overflow_suffix((iron, iron_added), (gold, gold_added))}",
         )
 
     if outcome_roll < 0.40:
         food = randint(40, 80) if food_reward is None else food_reward
         wood = randint(20, 50) if wood_reward is None else wood_reward
-        add_resource(state, ResourceType.FOOD, food)
-        add_resource(state, ResourceType.WOOD, wood)
+        food_added = add_resource(state, ResourceType.FOOD, food)
+        wood_added = add_resource(state, ResourceType.WOOD, wood)
         return _finish(
             state,
             True,
             "Expedition result: A forgotten granary was found above old roots, "
             "its doors sealed against centuries of hunger, "
-            f"adding {food} food and {wood} wood.",
+            f"adding {food} food and {wood} wood."
+            f"{_resource_overflow_suffix((food, food_added), (wood, wood_added))}",
         )
 
     if outcome_roll < 0.55:
         shell = randint(25, 60) if shell_reward is None else shell_reward
-        add_resource(state, ResourceType.SHELL, shell)
+        shell_added = add_resource(state, ResourceType.SHELL, shell)
         state.shell_fairy_bonus += EXPEDITION_SHELL_FAIRY_BONUS
         return _finish(
             state,
             True,
             "Expedition result: The soldiers mapped a shell shrine humming beneath "
             "cold blue moss, "
-            f"gaining {shell} shell and +0.2/s shell income.",
+            f"gaining {shell} shell and +0.2/s shell income."
+            f"{_resource_overflow_suffix((shell, shell_added))}",
         )
 
     if outcome_roll < 0.70:
@@ -564,15 +615,21 @@ def expedition(
         stone = randint(20, 50) if stone_reward is None else stone_reward
         iron = randint(20, 50) if iron_reward is None else iron_reward
         gold = randint(10, 25) if gold_reward is None else gold_reward
-        add_resource(state, ResourceType.STONE, stone)
-        add_resource(state, ResourceType.IRON, iron)
-        add_resource(state, ResourceType.GOLD, gold)
+        stone_added = add_resource(state, ResourceType.STONE, stone)
+        iron_added = add_resource(state, ResourceType.IRON, iron)
+        gold_added = add_resource(state, ResourceType.GOLD, gold)
+        overflow_suffix = _resource_overflow_suffix(
+            (stone, stone_added),
+            (iron, iron_added),
+            (gold, gold_added),
+        )
         return _finish(
             state,
             True,
             "Expedition result: Battlefield salvage from a forgotten siege "
             "filled the wagons with "
-            f"{stone} stone, {iron} iron, and {gold} gold.",
+            f"{stone} stone, {iron} iron, and {gold} gold."
+            f"{overflow_suffix}",
         )
 
     if outcome_roll < 0.97:
@@ -586,12 +643,13 @@ def expedition(
 
     shell = randint(50, 100) if shell_reward is None else shell_reward
     state.units[UnitType.CAPTAIN] += 1
-    add_resource(state, ResourceType.SHELL, shell)
+    shell_added = add_resource(state, ResourceType.SHELL, shell)
     return _finish(
         state,
         True,
         "Expedition result: A rival warband bent the knee. "
-        f"Captain +1 and {shell} shell.",
+        f"Captain +1 and {shell} shell."
+        f"{_resource_overflow_suffix((shell, shell_added))}",
     )
 
 
@@ -640,22 +698,24 @@ def kindle_the_pyre(
     if outcome_roll < 0.60:
         base_reward = randint(10, 50) if shell_reward is None else shell_reward
         reward = scaled_kindle_pyre_reward(state, base_reward)
-        add_resource(state, ResourceType.SHELL, reward)
+        shell_added = add_resource(state, ResourceType.SHELL, reward)
         return _finish(
             state,
             True,
             "Kindle the Pyre result: Shell fragments cracked open in the heat, "
-            f"yielding {reward} shell.",
+            f"yielding {reward} shell."
+            f"{_resource_overflow_suffix((reward, shell_added))}",
         )
 
     base_reward = randint(5, 10) if gold_reward is None else gold_reward
     reward = scaled_kindle_pyre_reward(state, base_reward)
-    add_resource(state, ResourceType.GOLD, reward)
+    gold_added = add_resource(state, ResourceType.GOLD, reward)
     return _finish(
         state,
         True,
         "Kindle the Pyre result: A bright ember hardened into treasure, "
-        f"yielding {reward} gold.",
+        f"yielding {reward} gold."
+        f"{_resource_overflow_suffix((reward, gold_added))}",
     )
 
 
