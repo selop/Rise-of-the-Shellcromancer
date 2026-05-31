@@ -63,6 +63,36 @@ def test_save_and_load_state_round_trip(tmp_path) -> None:
     assert loaded.run_elapsed_seconds == pytest.approx(456.0)
 
 
+
+def test_load_over_capacity_save_clamps_resources(tmp_path) -> None:
+    save_path = tmp_path / "save.json"
+    save_path.write_text(
+        json.dumps({"resources": {"wood": 150.0, "gold": 250.0}}),
+        encoding="utf-8",
+    )
+
+    loaded = load_state(save_path)
+
+    assert loaded.resources[ResourceType.WOOD] == pytest.approx(100.0)
+    assert loaded.resources[ResourceType.GOLD] == pytest.approx(100.0)
+
+
+def test_load_over_capacity_save_respects_storage_buildings(tmp_path) -> None:
+    save_path = tmp_path / "save.json"
+    save_path.write_text(
+        json.dumps(
+            {
+                "resources": {"wood": 250.0},
+                "buildings": {"storage": 2},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_state(save_path)
+
+    assert loaded.resources[ResourceType.WOOD] == pytest.approx(250.0)
+
 def test_load_missing_save_returns_fresh_state(tmp_path) -> None:
     loaded = load_state(tmp_path / "missing.json")
 

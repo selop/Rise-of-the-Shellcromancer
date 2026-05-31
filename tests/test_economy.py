@@ -16,6 +16,7 @@ from shellcromancer.economy import (
 )
 from shellcromancer.game_state import GameState
 from shellcromancer.resources import ResourceType
+from shellcromancer.storage import resource_capacity
 from shellcromancer.threats import (
     THREAT_DEFINITIONS,
     THREAT_ROLL_SECONDS,
@@ -129,6 +130,43 @@ def test_worker_and_farm_net_positive_food() -> None:
     assert delta[ResourceType.FOOD] == pytest.approx(0.2)
     assert delta[ResourceType.SHELL] == pytest.approx(0.1)
 
+
+
+def test_default_resource_capacity_is_one_hundred() -> None:
+    state = GameState()
+
+    assert resource_capacity(state, ResourceType.WOOD) == pytest.approx(100.0)
+
+
+def test_each_storage_adds_one_hundred_resource_capacity() -> None:
+    state = GameState()
+    state.buildings[BuildingType.STORAGE] = 3
+
+    assert resource_capacity(state, ResourceType.WOOD) == pytest.approx(400.0)
+    assert resource_capacity(state, ResourceType.GOLD) == pytest.approx(400.0)
+
+
+def test_apply_delta_caps_positive_resource_gain() -> None:
+    state = GameState()
+    state.resources[ResourceType.WOOD] = 99.9
+    delta = {resource: 0.0 for resource in ResourceType}
+    delta[ResourceType.WOOD] = 0.2
+
+    apply_delta(state, delta)
+
+    assert state.resources[ResourceType.WOOD] == pytest.approx(100.0)
+    assert state.last_delta[ResourceType.WOOD] == pytest.approx(0.2)
+
+
+def test_negative_delta_still_applies_at_capacity() -> None:
+    state = GameState()
+    state.resources[ResourceType.FOOD] = 100.0
+    delta = {resource: 0.0 for resource in ResourceType}
+    delta[ResourceType.FOOD] = -0.5
+
+    apply_delta(state, delta)
+
+    assert state.resources[ResourceType.FOOD] == pytest.approx(99.5)
 
 def test_apply_delta_clamps_resources_but_keeps_visible_deficit() -> None:
     state = GameState()

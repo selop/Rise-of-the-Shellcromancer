@@ -14,6 +14,7 @@ from shellcromancer.actions import (
     build_farm,
     build_mine,
     build_quarry,
+    build_storage,
     create_watchpost,
     create_worker,
     defend,
@@ -122,6 +123,34 @@ def test_build_quarry_consumes_resources_and_worker() -> None:
     assert state.units[UnitType.WORKER] == 0
     assert state.buildings[BuildingType.QUARRY] == 1
 
+
+
+def test_build_storage_consumes_resources_and_worker() -> None:
+    state = GameState()
+    state.units[UnitType.WORKER] = 1
+    state.resources[ResourceType.WOOD] = 50.0
+    state.resources[ResourceType.STONE] = 25.0
+
+    result = build_storage(state)
+
+    assert result.success is True
+    assert state.resources[ResourceType.WOOD] == 0.0
+    assert state.resources[ResourceType.STONE] == 0.0
+    assert state.units[UnitType.WORKER] == 0
+    assert state.buildings[BuildingType.STORAGE] == 1
+
+
+def test_cannot_build_storage_without_stone() -> None:
+    state = GameState()
+    state.units[UnitType.WORKER] = 1
+    state.resources[ResourceType.WOOD] = 50.0
+    state.resources[ResourceType.STONE] = 24.9
+
+    result = build_storage(state)
+
+    assert result.success is False
+    assert result.message == "Not enough stone to build a storage."
+    assert state.buildings[BuildingType.STORAGE] == 0
 
 def test_upgrade_worker_to_soldier_consumes_worker_iron_and_shell() -> None:
     state = GameState()
@@ -382,6 +411,19 @@ def test_cannot_build_catapult_without_resources() -> None:
     assert result.message == "Not enough gold to build a catapult."
     assert state.buildings[BuildingType.CATAPULT] == 0
 
+
+
+def test_hunt_reward_respects_resource_capacity() -> None:
+    state = GameState()
+    state.units[UnitType.SOLDIER] = 1
+    state.resources[ResourceType.FOOD] = 98.0
+    state.resources[ResourceType.SHELL] = 99.0
+
+    result = hunt(state, roll=0.9)
+
+    assert result.success is True
+    assert state.resources[ResourceType.FOOD] == 100.0
+    assert state.resources[ResourceType.SHELL] == 100.0
 
 def test_hunt_requires_soldier() -> None:
     state = GameState()

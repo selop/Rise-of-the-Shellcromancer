@@ -19,8 +19,9 @@ from shellcromancer import actions
 from shellcromancer.buildings import BUILDING_DEFINITIONS, BuildingType
 from shellcromancer.economy import mark_dead_if_food_depleted, tick
 from shellcromancer.game_state import GameState
-from shellcromancer.persistence import default_save_path, load_state, save_state
+from shellcromancer.persistence import load_state, save_state
 from shellcromancer.resources import ALL_RESOURCES, ResourceType
+from shellcromancer.storage import is_resource_capped, resource_capacity
 from shellcromancer.threats import (
     THREAT_DEFINITIONS,
     ThreatDefinition,
@@ -152,6 +153,13 @@ BUILDING_ACTIONS = (
         },
         unit_costs={},
         run=actions.build_catapult,
+    ),
+    MenuAction(
+        label="Storage",
+        cost="1 worker, 50 wood, 25 stone",
+        resource_costs={ResourceType.WOOD: 50.0, ResourceType.STONE: 25.0},
+        unit_costs={UnitType.WORKER: 1},
+        run=actions.build_storage,
     ),
 )
 
@@ -294,7 +302,7 @@ class ShellcromancerApp(App[None]):
 
     def __init__(self, save_path: Path | None = None) -> None:
         super().__init__()
-        self.save_path = save_path or default_save_path()
+        self.save_path = save_path
         self.state = load_state(self.save_path)
         mark_dead_if_food_depleted(self.state)
         self.selected_action_index = 0
@@ -341,7 +349,7 @@ class ShellcromancerApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.resource_table.add_columns("Resource", "Amount", "Per Second")
+        self.resource_table.add_columns("Resource", "Stored", "Per Second")
         self.unit_table.add_columns("Unit", "Owned")
         self.building_table.add_columns("Building", "Owned")
         self.tables_ready = True
@@ -426,10 +434,12 @@ class ShellcromancerApp(App[None]):
     def _refresh_resource_table(self) -> None:
         self.resource_table.clear()
         for resource in ALL_RESOURCES:
+            delta = self.state.last_delta[resource]
+            capped_suffix = " (capped)" if is_resource_capped(self.state, resource) and delta > 0 else ""
             self.resource_table.add_row(
                 resource.value,
-                f"{self.state.resources[resource]:.1f}",
-                f"{self.state.last_delta[resource]:+.1f}/s",
+                format_resource_store(self.state, resource),
+                f"{delta:+.1f}/s{capped_suffix}",
             )
 
     def _refresh_unit_table(self) -> None:
@@ -472,7 +482,6 @@ class ShellcromancerApp(App[None]):
             self.status_view.update(
                 "[red bold]Game Over[/]\n"
                 f"Run Time: {format_duration(self.state.run_elapsed_seconds)}\n"
-                f"Save: {self.save_path}\n"
                 + "\n".join(format_story_lines(self.state))
                 + "\nPress n to start a new run."
             )
@@ -480,7 +489,6 @@ class ShellcromancerApp(App[None]):
 
         self.status_view.update(
             f"Run Time: {format_duration(self.state.run_elapsed_seconds)}\n"
-            f"Save: {self.save_path}\n"
             "[bold]Story[/]\n"
             + "\n".join(format_story_lines(self.state))
         )
@@ -655,15 +663,21 @@ def format_log_lines(state: GameState) -> list[str]:
     return [f"- {message}" for message in state.action_history[-25:]]
 
 
+def format_resource_store(state: GameState, resource: ResourceType) -> str:
+    return f"{state.resources[resource]:.1f} / {resource_capacity(state, resource):.1f}"
+
+
 def render_state(state: GameState, selected_action_index: int = 0) -> str:
     if state.is_dead:
         return render_game_over(state)
 
     resource_lines = []
     for resource in ALL_RESOURCES:
-        value = state.resources[resource]
         delta = state.last_delta[resource]
-        resource_lines.append(f"{resource.value:<6} {value:>6.1f}   ({delta:+.1f}/s)")
+        capped_suffix = " (capped)" if is_resource_capped(state, resource) and delta > 0 else ""
+        resource_lines.append(
+            f"{resource.value:<6} {format_resource_store(state, resource):>15}   ({delta:+.1f}/s{capped_suffix})"
+        )
 
     menu_action = selected_action(selected_action_index)
     readiness = action_status_label(state, menu_action)
@@ -756,6 +770,7 @@ def format_encyclopedia_lines(state: GameState | None = None) -> list[str]:
     lines = ["Resources"]
     for resource in ALL_RESOURCES:
         lines.append(f"- {resource.value.title()}: Stored resource used by the realm.")
+    lines.append("- Capacity: each resource holds 100 plus 100 per Storage building; gains above capacity are discarded.")
 
     lines.extend(["", "Units"])
     for unit_type in UnitType:
@@ -768,10 +783,12 @@ def format_encyclopedia_lines(state: GameState | None = None) -> list[str]:
     lines.extend(["", "Buildings"])
     for building_type in BuildingType:
         definition = BUILDING_DEFINITIONS[building_type]
-        lines.append(
-            f"- {definition.name}: production {format_rate_map(definition.production)}; "
-            f"upkeep {format_rate_map(definition.upkeep)}."
+        description = (
+            "adds +100 capacity to every resource"
+            if building_type is BuildingType.STORAGE
+            else f"production {format_rate_map(definition.production)}; upkeep {format_rate_map(definition.upkeep)}"
         )
+        lines.append(f"- {definition.name}: {description}.")
 
     lines.extend(["", "Actions"])
     for menu_action in MENU_ACTIONS:
@@ -870,9 +887,11 @@ def format_shop_text(state: GameState, selected_action_index: int) -> Text:
 def render_game_over(state: GameState) -> str:
     resource_lines = []
     for resource in ALL_RESOURCES:
-        value = state.resources[resource]
         delta = state.last_delta[resource]
-        resource_lines.append(f"{resource.value:<6} {value:>6.1f}   ({delta:+.1f}/s)")
+        capped_suffix = " (capped)" if is_resource_capped(state, resource) and delta > 0 else ""
+        resource_lines.append(
+            f"{resource.value:<6} {format_resource_store(state, resource):>15}   ({delta:+.1f}/s{capped_suffix})"
+        )
 
     return "\n".join(
         [

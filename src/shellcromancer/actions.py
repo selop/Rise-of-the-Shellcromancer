@@ -5,6 +5,7 @@ from random import randint, random
 from shellcromancer.buildings import BuildingType
 from shellcromancer.game_state import GameState, record_action_message
 from shellcromancer.resources import ResourceType
+from shellcromancer.storage import add_resource, clamp_all_resources
 from shellcromancer.threats import (
     ActiveThreat,
     active_threat_name,
@@ -100,14 +101,17 @@ def create_worker(state: GameState) -> ActionResult:
 
 
 def _build_structure(
-    state: GameState, building_type: BuildingType, singular_name: str
+    state: GameState,
+    building_type: BuildingType,
+    singular_name: str,
+    costs: dict[ResourceType, float] | None = None,
 ) -> ActionResult:
     if state.units[UnitType.WORKER] < 1:
         return _finish(
             state, False, f"Need at least 1 worker to build a {singular_name}."
         )
 
-    costs = {
+    costs = costs or {
         ResourceType.WOOD: 10.0,
         ResourceType.STONE: 10.0,
         ResourceType.IRON: 2.0,
@@ -121,6 +125,7 @@ def _build_structure(
     _spend(state, costs)
     state.units[UnitType.WORKER] -= 1
     state.buildings[building_type] += 1
+    clamp_all_resources(state)
     return _finish(state, True, f"Built {singular_name}.")
 
 
@@ -134,6 +139,15 @@ def build_mine(state: GameState) -> ActionResult:
 
 def build_quarry(state: GameState) -> ActionResult:
     return _build_structure(state, BuildingType.QUARRY, "quarry")
+
+
+def build_storage(state: GameState) -> ActionResult:
+    return _build_structure(
+        state,
+        BuildingType.STORAGE,
+        "storage",
+        {ResourceType.WOOD: 50.0, ResourceType.STONE: 25.0},
+    )
 
 
 def upgrade_worker_to_soldier(state: GameState) -> ActionResult:
@@ -310,15 +324,15 @@ def hunt(state: GameState, roll: float | None = None) -> ActionResult:
         )
 
     if outcome_roll < 0.80:
-        state.resources[ResourceType.FOOD] += 5.0
+        add_resource(state, ResourceType.FOOD, 5.0)
         return _finish(
             state,
             True,
             "Hunt result: The soldier returned with fresh game, adding 5 food to the stores.",
         )
 
-    state.resources[ResourceType.FOOD] += 5.0
-    state.resources[ResourceType.SHELL] += 5.0
+    add_resource(state, ResourceType.FOOD, 5.0)
+    add_resource(state, ResourceType.SHELL, 5.0)
     return _finish(
         state,
         True,
@@ -389,7 +403,7 @@ def patrol(
 
     if outcome_roll < 0.50:
         reward = randint(1, 10) if gold_reward is None else gold_reward
-        state.resources[ResourceType.GOLD] += reward
+        add_resource(state, ResourceType.GOLD, reward)
         return _finish(
             state,
             True,
@@ -426,8 +440,8 @@ def patrol(
 
     food = randint(1, 10) if food_reward is None else food_reward
     iron = randint(1, 10) if iron_reward is None else iron_reward
-    state.resources[ResourceType.FOOD] += food
-    state.resources[ResourceType.IRON] += iron
+    add_resource(state, ResourceType.FOOD, food)
+    add_resource(state, ResourceType.IRON, iron)
     return _finish(
         state,
         True,
@@ -489,8 +503,8 @@ def expedition(
         state.units[UnitType.SOLDIER] -= 3
         iron = randint(10, 20) if iron_reward is None else iron_reward
         gold = randint(5, 12) if gold_reward is None else gold_reward
-        state.resources[ResourceType.IRON] += iron
-        state.resources[ResourceType.GOLD] += gold
+        add_resource(state, ResourceType.IRON, iron)
+        add_resource(state, ResourceType.GOLD, gold)
         return _finish(
             state,
             True,
@@ -502,8 +516,8 @@ def expedition(
     if outcome_roll < 0.25:
         iron = randint(15, 30) if iron_reward is None else iron_reward
         gold = randint(10, 25) if gold_reward is None else gold_reward
-        state.resources[ResourceType.IRON] += iron
-        state.resources[ResourceType.GOLD] += gold
+        add_resource(state, ResourceType.IRON, iron)
+        add_resource(state, ResourceType.GOLD, gold)
         return _finish(
             state,
             True,
@@ -514,8 +528,8 @@ def expedition(
     if outcome_roll < 0.40:
         food = randint(40, 80) if food_reward is None else food_reward
         wood = randint(20, 50) if wood_reward is None else wood_reward
-        state.resources[ResourceType.FOOD] += food
-        state.resources[ResourceType.WOOD] += wood
+        add_resource(state, ResourceType.FOOD, food)
+        add_resource(state, ResourceType.WOOD, wood)
         return _finish(
             state,
             True,
@@ -526,7 +540,7 @@ def expedition(
 
     if outcome_roll < 0.55:
         shell = randint(25, 60) if shell_reward is None else shell_reward
-        state.resources[ResourceType.SHELL] += shell
+        add_resource(state, ResourceType.SHELL, shell)
         state.shell_fairy_bonus += EXPEDITION_SHELL_FAIRY_BONUS
         return _finish(
             state,
@@ -550,9 +564,9 @@ def expedition(
         stone = randint(20, 50) if stone_reward is None else stone_reward
         iron = randint(20, 50) if iron_reward is None else iron_reward
         gold = randint(10, 25) if gold_reward is None else gold_reward
-        state.resources[ResourceType.STONE] += stone
-        state.resources[ResourceType.IRON] += iron
-        state.resources[ResourceType.GOLD] += gold
+        add_resource(state, ResourceType.STONE, stone)
+        add_resource(state, ResourceType.IRON, iron)
+        add_resource(state, ResourceType.GOLD, gold)
         return _finish(
             state,
             True,
@@ -572,7 +586,7 @@ def expedition(
 
     shell = randint(50, 100) if shell_reward is None else shell_reward
     state.units[UnitType.CAPTAIN] += 1
-    state.resources[ResourceType.SHELL] += shell
+    add_resource(state, ResourceType.SHELL, shell)
     return _finish(
         state,
         True,
@@ -626,7 +640,7 @@ def kindle_the_pyre(
     if outcome_roll < 0.60:
         base_reward = randint(10, 50) if shell_reward is None else shell_reward
         reward = scaled_kindle_pyre_reward(state, base_reward)
-        state.resources[ResourceType.SHELL] += reward
+        add_resource(state, ResourceType.SHELL, reward)
         return _finish(
             state,
             True,
@@ -636,7 +650,7 @@ def kindle_the_pyre(
 
     base_reward = randint(5, 10) if gold_reward is None else gold_reward
     reward = scaled_kindle_pyre_reward(state, base_reward)
-    state.resources[ResourceType.GOLD] += reward
+    add_resource(state, ResourceType.GOLD, reward)
     return _finish(
         state,
         True,

@@ -10,6 +10,7 @@ class BuildingType(StrEnum):
     QUARRY = "quarry"
     ARCANE_TOWER = "arcane_tower"
     CATAPULT = "catapult"
+    STORAGE = "storage"
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,9 @@ BUILDING_DEFINITIONS: dict[BuildingType, BuildingDefinition] = {
     ),
     BuildingType.CATAPULT: BuildingDefinition(
         name="Catapult",
+    ),
+    BuildingType.STORAGE: BuildingDefinition(
+        name="Storage",
     ),
 }
 
