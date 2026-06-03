@@ -1,5 +1,3 @@
-from dataclasses import dataclass
-
 from shellcromancer.buildings import BUILDING_DEFINITIONS, BuildingType
 from shellcromancer.actions import (
     DEFEND_ACTION_KEY,
@@ -9,6 +7,7 @@ from shellcromancer.actions import (
     hunt,
     patrol,
 )
+from shellcromancer.catalog import AUTOMATED_ACTIONS
 from shellcromancer.game_state import GameState, empty_delta, record_action_message
 from shellcromancer.resources import ResourceType
 from shellcromancer.storage import add_resource
@@ -30,46 +29,6 @@ BASE_RESOURCE_TYPES = (
     ResourceType.SHELL,
 )
 DEATH_MESSAGE = "The stores are empty. You starved, and the shellhost falls silent."
-
-
-@dataclass(frozen=True)
-class AutomatedAction:
-    action_key: str
-    unit_enablers: dict[UnitType, int]
-    building_enablers: dict[BuildingType, int]
-    unit_requirements: dict[UnitType, int]
-    building_requirements: dict[BuildingType, int]
-    resource_requirements: dict[ResourceType, float]
-    requires_active_threat: bool = False
-
-
-AUTOMATED_ACTIONS = {
-    HUNT_ACTION_KEY: AutomatedAction(
-        action_key=HUNT_ACTION_KEY,
-        unit_enablers={UnitType.RANGER: 1},
-        building_enablers={},
-        unit_requirements={UnitType.SOLDIER: 1},
-        building_requirements={},
-        resource_requirements={},
-    ),
-    PATROL_ACTION_KEY: AutomatedAction(
-        action_key=PATROL_ACTION_KEY,
-        unit_enablers={UnitType.CAPTAIN: 1},
-        building_enablers={},
-        unit_requirements={UnitType.SOLDIER: 3},
-        building_requirements={},
-        resource_requirements={ResourceType.FOOD: 10.0},
-    ),
-    DEFEND_ACTION_KEY: AutomatedAction(
-        action_key=DEFEND_ACTION_KEY,
-        unit_enablers={UnitType.WATCHPOST: 1},
-        building_enablers={},
-        unit_requirements={},
-        building_requirements={BuildingType.CATAPULT: 1},
-        resource_requirements={},
-        requires_active_threat=True,
-    ),
-}
 
 
 def calculate_delta(state: GameState) -> dict[ResourceType, float]:
@@ -119,18 +78,18 @@ def reduce_cooldowns(state: GameState, elapsed_seconds: float = 1.0) -> None:
 
 def has_automation_enabler(state: GameState, action_key: str) -> bool:
     automated_action = AUTOMATED_ACTIONS[action_key]
-    return _has_units(state, automated_action.unit_enablers) and _has_buildings(
-        state, automated_action.building_enablers
-    )
+    return _has_units(
+        state, automated_action.automation_enabler_units
+    ) and _has_buildings(state, automated_action.automation_enabler_buildings)
 
 
 def action_prerequisites_met(state: GameState, action_key: str) -> bool:
     automated_action = AUTOMATED_ACTIONS[action_key]
-    if not _has_units(state, automated_action.unit_requirements):
+    if not _has_units(state, automated_action.effective_unit_costs(state)):
         return False
-    if not _has_buildings(state, automated_action.building_requirements):
+    if not _has_buildings(state, automated_action.building_costs):
         return False
-    if not _has_resources(state, automated_action.resource_requirements):
+    if not _has_resources(state, automated_action.effective_resource_costs(state)):
         return False
     return not automated_action.requires_active_threat or bool(state.active_threats)
 

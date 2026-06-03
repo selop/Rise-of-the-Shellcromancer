@@ -37,6 +37,11 @@ STORAGE_BASE_RESOURCE_COSTS = {
     ResourceType.WOOD: 50.0,
     ResourceType.STONE: 25.0,
 }
+STRUCTURE_RESOURCE_COSTS = {
+    ResourceType.WOOD: 10.0,
+    ResourceType.STONE: 10.0,
+    ResourceType.IRON: 2.0,
+}
 
 
 @dataclass(frozen=True)
@@ -71,6 +76,51 @@ def _finish(state: GameState, success: bool, message: str) -> ActionResult:
     return ActionResult(success=success, message=message)
 
 
+def _complete_inventory_action(
+    state: GameState,
+    *,
+    required_units: dict[UnitType, int] | None = None,
+    resource_costs: dict[ResourceType, float] | None = None,
+    unit_changes: dict[UnitType, int] | None = None,
+    building_changes: dict[BuildingType, int] | None = None,
+    missing_unit_message: str | None = None,
+    missing_resource_template: str,
+    success_message: str,
+    clamp_resources: bool = False,
+) -> ActionResult:
+    required_units = required_units or {}
+    for unit, amount in required_units.items():
+        if state.units[unit] < amount:
+            message = missing_unit_message or _default_missing_unit_message(
+                unit, amount
+            )
+            return _finish(state, False, message)
+
+    resource_costs = resource_costs or {}
+    can_afford, missing = _can_afford(state, resource_costs)
+    if not can_afford and missing is not None:
+        return _finish(
+            state,
+            False,
+            missing_resource_template.format(resource=_resource_name(missing)),
+        )
+
+    _spend(state, resource_costs)
+    for unit, amount in (unit_changes or {}).items():
+        state.units[unit] += amount
+    for building, amount in (building_changes or {}).items():
+        state.buildings[building] += amount
+    if clamp_resources:
+        clamp_all_resources(state)
+    return _finish(state, True, success_message)
+
+
+def _default_missing_unit_message(unit: UnitType, amount: int) -> str:
+    unit_name = unit.value
+    plural_suffix = "" if amount == 1 else "s"
+    return f"Need at least {amount} {unit_name}{plural_suffix}."
+
+
 def _resource_overflow_suffix(*rewards: tuple[float, float]) -> str:
     if any(nominal > 0 and applied < nominal for nominal, applied in rewards):
         return RESOURCE_OVERFLOW_SUFFIX
@@ -102,14 +152,13 @@ def scaled_kindle_pyre_reward(state: GameState, reward: int) -> int:
 
 
 def create_worker(state: GameState) -> ActionResult:
-    costs = {ResourceType.SHELL: 10.0}
-    can_afford, missing = _can_afford(state, costs)
-    if not can_afford and missing is not None:
-        return _finish(state, False, f"Not enough {_resource_name(missing)} to create worker.")
-
-    _spend(state, costs)
-    state.units[UnitType.WORKER] += 1
-    return _finish(state, True, "Created worker.")
+    return _complete_inventory_action(
+        state,
+        resource_costs={ResourceType.SHELL: 10.0},
+        unit_changes={UnitType.WORKER: 1},
+        missing_resource_template="Not enough {resource} to create worker.",
+        success_message="Created worker.",
+    )
 
 
 def _build_structure(
@@ -118,27 +167,19 @@ def _build_structure(
     singular_name: str,
     costs: dict[ResourceType, float] | None = None,
 ) -> ActionResult:
-    if state.units[UnitType.WORKER] < 1:
-        return _finish(
-            state, False, f"Need at least 1 worker to build a {singular_name}."
-        )
-
-    costs = costs or {
-        ResourceType.WOOD: 10.0,
-        ResourceType.STONE: 10.0,
-        ResourceType.IRON: 2.0,
-    }
-    can_afford, missing = _can_afford(state, costs)
-    if not can_afford and missing is not None:
-        return _finish(
-            state, False, f"Not enough {_resource_name(missing)} to build a {singular_name}."
-        )
-
-    _spend(state, costs)
-    state.units[UnitType.WORKER] -= 1
-    state.buildings[building_type] += 1
-    clamp_all_resources(state)
-    return _finish(state, True, f"Built {singular_name}.")
+    return _complete_inventory_action(
+        state,
+        required_units={UnitType.WORKER: 1},
+        resource_costs=costs or STRUCTURE_RESOURCE_COSTS,
+        unit_changes={UnitType.WORKER: -1},
+        building_changes={building_type: 1},
+        missing_unit_message=f"Need at least 1 worker to build a {singular_name}.",
+        missing_resource_template=(
+            f"Not enough {{resource}} to build a {singular_name}."
+        ),
+        success_message=f"Built {singular_name}.",
+        clamp_resources=True,
+    )
 
 
 def build_farm(state: GameState) -> ActionResult:
@@ -172,179 +213,136 @@ def storage_resource_costs(state: GameState) -> dict[ResourceType, float]:
 def build_storage(state: GameState) -> ActionResult:
     worker_cost = storage_worker_cost(state)
     worker_name = "worker" if worker_cost == 1 else "workers"
-    if state.units[UnitType.WORKER] < worker_cost:
-        return _finish(
-            state,
-            False,
-            f"Need at least {worker_cost} {worker_name} to build a storage.",
-        )
-
-    costs = storage_resource_costs(state)
-    can_afford, missing = _can_afford(state, costs)
-    if not can_afford and missing is not None:
-        return _finish(
-            state, False, f"Not enough {_resource_name(missing)} to build a storage."
-        )
-
-    _spend(state, costs)
-    state.units[UnitType.WORKER] -= worker_cost
-    state.buildings[BuildingType.STORAGE] += 1
-    clamp_all_resources(state)
-    return _finish(state, True, "Built storage.")
+    return _complete_inventory_action(
+        state,
+        required_units={UnitType.WORKER: worker_cost},
+        resource_costs=storage_resource_costs(state),
+        unit_changes={UnitType.WORKER: -worker_cost},
+        building_changes={BuildingType.STORAGE: 1},
+        missing_unit_message=(
+            f"Need at least {worker_cost} {worker_name} to build a storage."
+        ),
+        missing_resource_template="Not enough {resource} to build a storage.",
+        success_message="Built storage.",
+        clamp_resources=True,
+    )
 
 
 def upgrade_worker_to_soldier(state: GameState) -> ActionResult:
-    if state.units[UnitType.WORKER] < 1:
-        return _finish(state, False, "Need at least 1 worker to upgrade soldier.")
-
-    costs = {
-        ResourceType.IRON: 5.0,
-        ResourceType.SHELL: 5.0,
-    }
-    can_afford, missing = _can_afford(state, costs)
-    if not can_afford and missing is not None:
-        return _finish(state, False, f"Not enough {_resource_name(missing)} to upgrade soldier.")
-
-    _spend(state, costs)
-    state.units[UnitType.WORKER] -= 1
-    state.units[UnitType.SOLDIER] += 1
-    return _finish(state, True, "Upgraded worker to soldier.")
+    return _complete_inventory_action(
+        state,
+        required_units={UnitType.WORKER: 1},
+        resource_costs={
+            ResourceType.IRON: 5.0,
+            ResourceType.SHELL: 5.0,
+        },
+        unit_changes={UnitType.WORKER: -1, UnitType.SOLDIER: 1},
+        missing_unit_message="Need at least 1 worker to upgrade soldier.",
+        missing_resource_template="Not enough {resource} to upgrade soldier.",
+        success_message="Upgraded worker to soldier.",
+    )
 
 
 def upgrade_soldier_to_sorcerer(state: GameState) -> ActionResult:
-    if state.units[UnitType.SOLDIER] < 1:
-        return _finish(state, False, "Need at least 1 soldier to create sorcerer.")
-
-    costs = {ResourceType.SHELL: 50.0}
-    can_afford, missing = _can_afford(state, costs)
-    if not can_afford and missing is not None:
-        return _finish(state, False, f"Not enough {_resource_name(missing)} to create sorcerer.")
-
-    _spend(state, costs)
-    state.units[UnitType.SOLDIER] -= 1
-    state.units[UnitType.SORCERER] += 1
-    return _finish(state, True, "Created sorcerer from soldier.")
+    return _complete_inventory_action(
+        state,
+        required_units={UnitType.SOLDIER: 1},
+        resource_costs={ResourceType.SHELL: 50.0},
+        unit_changes={UnitType.SOLDIER: -1, UnitType.SORCERER: 1},
+        missing_unit_message="Need at least 1 soldier to create sorcerer.",
+        missing_resource_template="Not enough {resource} to create sorcerer.",
+        success_message="Created sorcerer from soldier.",
+    )
 
 
 def upgrade_worker_to_lumberjack(state: GameState) -> ActionResult:
-    if state.units[UnitType.WORKER] < 1:
-        return _finish(state, False, "Need at least 1 worker to upgrade lumberjack.")
-
-    costs = {
-        ResourceType.WOOD: 5.0,
-        ResourceType.SHELL: 2.0,
-    }
-    can_afford, missing = _can_afford(state, costs)
-    if not can_afford and missing is not None:
-        return _finish(state, False, f"Not enough {_resource_name(missing)} to upgrade lumberjack.")
-
-    _spend(state, costs)
-    state.units[UnitType.WORKER] -= 1
-    state.units[UnitType.LUMBERJACK] += 1
-    return _finish(state, True, "Upgraded worker to lumberjack.")
+    return _complete_inventory_action(
+        state,
+        required_units={UnitType.WORKER: 1},
+        resource_costs={
+            ResourceType.WOOD: 5.0,
+            ResourceType.SHELL: 2.0,
+        },
+        unit_changes={UnitType.WORKER: -1, UnitType.LUMBERJACK: 1},
+        missing_unit_message="Need at least 1 worker to upgrade lumberjack.",
+        missing_resource_template="Not enough {resource} to upgrade lumberjack.",
+        success_message="Upgraded worker to lumberjack.",
+    )
 
 
 def upgrade_soldier_to_ranger(state: GameState) -> ActionResult:
-    if state.units[UnitType.SOLDIER] < 1:
-        return _finish(state, False, "Need at least 1 soldier to create ranger.")
-
-    costs = {
-        ResourceType.GOLD: 5.0,
-        ResourceType.SHELL: 10.0,
-    }
-    can_afford, missing = _can_afford(state, costs)
-    if not can_afford and missing is not None:
-        return _finish(
-            state, False, f"Not enough {_resource_name(missing)} to create ranger."
-        )
-
-    _spend(state, costs)
-    state.units[UnitType.SOLDIER] -= 1
-    state.units[UnitType.RANGER] += 1
-    return _finish(
+    return _complete_inventory_action(
         state,
-        True,
-        "Created ranger from soldier. Hunts will now run whenever they are ready.",
+        required_units={UnitType.SOLDIER: 1},
+        resource_costs={
+            ResourceType.GOLD: 5.0,
+            ResourceType.SHELL: 10.0,
+        },
+        unit_changes={UnitType.SOLDIER: -1, UnitType.RANGER: 1},
+        missing_unit_message="Need at least 1 soldier to create ranger.",
+        missing_resource_template="Not enough {resource} to create ranger.",
+        success_message=(
+            "Created ranger from soldier. Hunts will now run whenever they are ready."
+        ),
     )
 
 
 def promote_worker_to_captain(state: GameState) -> ActionResult:
-    if state.units[UnitType.SOLDIER] < 1:
-        return _finish(state, False, "Need at least 1 soldier to promote captain.")
-
-    costs = {ResourceType.GOLD: 10.0}
-    can_afford, missing = _can_afford(state, costs)
-    if not can_afford and missing is not None:
-        return _finish(
-            state, False, f"Not enough {_resource_name(missing)} to promote captain."
-        )
-
-    _spend(state, costs)
-    state.units[UnitType.SOLDIER] -= 1
-    state.units[UnitType.CAPTAIN] += 1
-    return _finish(
+    return _complete_inventory_action(
         state,
-        True,
-        "Promoted a soldier to captain. Patrols will now depart whenever they are ready.",
+        required_units={UnitType.SOLDIER: 1},
+        resource_costs={ResourceType.GOLD: 10.0},
+        unit_changes={UnitType.SOLDIER: -1, UnitType.CAPTAIN: 1},
+        missing_unit_message="Need at least 1 soldier to promote captain.",
+        missing_resource_template="Not enough {resource} to promote captain.",
+        success_message=(
+            "Promoted a soldier to captain. Patrols will now depart whenever they are ready."
+        ),
     )
 
 
 def create_watchpost(state: GameState) -> ActionResult:
-    costs = {
-        ResourceType.GOLD: 10.0,
-        ResourceType.WOOD: 50.0,
-    }
-    can_afford, missing = _can_afford(state, costs)
-    if not can_afford and missing is not None:
-        return _finish(
-            state, False, f"Not enough {_resource_name(missing)} to post a watchpost."
-        )
-
-    _spend(state, costs)
-    state.units[UnitType.WATCHPOST] += 1
-    return _finish(
+    return _complete_inventory_action(
         state,
-        True,
-        "Posted a watchpost. Defend will now run automatically when ready.",
+        resource_costs={
+            ResourceType.GOLD: 10.0,
+            ResourceType.WOOD: 50.0,
+        },
+        unit_changes={UnitType.WATCHPOST: 1},
+        missing_resource_template="Not enough {resource} to post a watchpost.",
+        success_message=(
+            "Posted a watchpost. Defend will now run automatically when ready."
+        ),
     )
 
 
 def build_arcane_tower(state: GameState) -> ActionResult:
-    if state.units[UnitType.SORCERER] < 1:
-        return _finish(
-            state, False, "Need at least 1 sorcerer to build an arcane tower."
-        )
-
-    costs = {ResourceType.STONE: 250.0}
-    can_afford, missing = _can_afford(state, costs)
-    if not can_afford and missing is not None:
-        return _finish(
-            state,
-            False,
-            f"Not enough {_resource_name(missing)} to build an arcane tower.",
-        )
-
-    _spend(state, costs)
-    state.units[UnitType.SORCERER] -= 1
-    state.buildings[BuildingType.ARCANE_TOWER] += 1
-    return _finish(state, True, "Built arcane tower.")
+    return _complete_inventory_action(
+        state,
+        required_units={UnitType.SORCERER: 1},
+        resource_costs={ResourceType.STONE: 250.0},
+        unit_changes={UnitType.SORCERER: -1},
+        building_changes={BuildingType.ARCANE_TOWER: 1},
+        missing_unit_message="Need at least 1 sorcerer to build an arcane tower.",
+        missing_resource_template=(
+            "Not enough {resource} to build an arcane tower."
+        ),
+        success_message="Built arcane tower.",
+    )
 
 
 def build_catapult(state: GameState) -> ActionResult:
-    costs = {
-        ResourceType.GOLD: 5.0,
-        ResourceType.WOOD: 100.0,
-        ResourceType.STONE: 200.0,
-    }
-    can_afford, missing = _can_afford(state, costs)
-    if not can_afford and missing is not None:
-        return _finish(
-            state, False, f"Not enough {_resource_name(missing)} to build a catapult."
-        )
-
-    _spend(state, costs)
-    state.buildings[BuildingType.CATAPULT] += 1
-    return _finish(state, True, "Built catapult.")
+    return _complete_inventory_action(
+        state,
+        resource_costs={
+            ResourceType.GOLD: 5.0,
+            ResourceType.WOOD: 100.0,
+            ResourceType.STONE: 200.0,
+        },
+        building_changes={BuildingType.CATAPULT: 1},
+        missing_resource_template="Not enough {resource} to build a catapult.",
+        success_message="Built catapult.",
+    )
 
 
 def hunt(state: GameState, roll: float | None = None) -> ActionResult:

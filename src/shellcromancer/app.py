@@ -1,6 +1,4 @@
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -15,8 +13,20 @@ from textual.widgets import (
     TabPane,
 )
 
-from shellcromancer import actions
 from shellcromancer.buildings import BUILDING_DEFINITIONS, BuildingType
+from shellcromancer.catalog import (
+    AUTOMATED_ACTION_LABELS,
+    AUTOMATED_ACTION_NAMES,
+    AUTOMATION_ENABLE_REQUIREMENTS,
+    BUILDING_ACTIONS,
+    MENU_ACTIONS,
+    MENU_COLUMNS,
+    ONE_TIME_ACTIONS,
+    SHOP_COLUMN_LABELS,
+    UNIT_ACTIONS,
+    MenuAction,
+    owned_count,
+)
 from shellcromancer.economy import (
     has_automation_enabler,
     mark_dead_if_food_depleted,
@@ -33,215 +43,6 @@ from shellcromancer.threats import (
     scaled_threat_damage,
 )
 from shellcromancer.units import UNIT_DEFINITIONS, UnitType
-
-
-@dataclass(frozen=True)
-class MenuAction:
-    label: str
-    cost: str
-    resource_costs: dict[ResourceType, float]
-    unit_costs: dict[UnitType, int]
-    run: Callable[[GameState], actions.ActionResult]
-    cooldown_key: str | None = None
-    building_costs: dict[BuildingType, int] | None = None
-    requires_active_threat: bool = False
-
-
-UNIT_ACTIONS = (
-    MenuAction(
-        label="Worker",
-        cost="10 shell",
-        resource_costs={ResourceType.SHELL: 10.0},
-        unit_costs={},
-        run=actions.create_worker,
-    ),
-    MenuAction(
-        label="Soldier",
-        cost="1 worker, 5 iron, 5 shell",
-        resource_costs={
-            ResourceType.IRON: 5.0,
-            ResourceType.SHELL: 5.0,
-        },
-        unit_costs={UnitType.WORKER: 1},
-        run=actions.upgrade_worker_to_soldier,
-    ),
-    MenuAction(
-        label="Lumberjack",
-        cost="1 worker, 5 wood, 2 shell",
-        resource_costs={
-            ResourceType.WOOD: 5.0,
-            ResourceType.SHELL: 2.0,
-        },
-        unit_costs={UnitType.WORKER: 1},
-        run=actions.upgrade_worker_to_lumberjack,
-    ),
-    MenuAction(
-        label="Ranger",
-        cost="1 soldier, 5 gold, 10 shell",
-        resource_costs={ResourceType.GOLD: 5.0, ResourceType.SHELL: 10.0},
-        unit_costs={UnitType.SOLDIER: 1},
-        run=actions.upgrade_soldier_to_ranger,
-    ),
-    MenuAction(
-        label="Captain",
-        cost="1 soldier, 10 gold",
-        resource_costs={ResourceType.GOLD: 10.0},
-        unit_costs={UnitType.SOLDIER: 1},
-        run=actions.promote_worker_to_captain,
-    ),
-    MenuAction(
-        label="Watchpost",
-        cost="10 gold, 50 wood",
-        resource_costs={ResourceType.GOLD: 10.0, ResourceType.WOOD: 50.0},
-        unit_costs={},
-        run=actions.create_watchpost,
-    ),
-    MenuAction(
-        label="Sorcerer",
-        cost="1 soldier, 50 shell",
-        resource_costs={ResourceType.SHELL: 50.0},
-        unit_costs={UnitType.SOLDIER: 1},
-        run=actions.upgrade_soldier_to_sorcerer,
-    ),
-)
-
-
-BUILDING_ACTIONS = (
-    MenuAction(
-        label="Farm",
-        cost="10 wood, 10 stone, 2 iron, 1 worker",
-        resource_costs={
-            ResourceType.WOOD: 10.0,
-            ResourceType.STONE: 10.0,
-            ResourceType.IRON: 2.0,
-        },
-        unit_costs={UnitType.WORKER: 1},
-        run=actions.build_farm,
-    ),
-    MenuAction(
-        label="Mine",
-        cost="10 wood, 10 stone, 2 iron, 1 worker",
-        resource_costs={
-            ResourceType.WOOD: 10.0,
-            ResourceType.STONE: 10.0,
-            ResourceType.IRON: 2.0,
-        },
-        unit_costs={UnitType.WORKER: 1},
-        run=actions.build_mine,
-    ),
-    MenuAction(
-        label="Quarry",
-        cost="10 wood, 10 stone, 2 iron, 1 worker",
-        resource_costs={
-            ResourceType.WOOD: 10.0,
-            ResourceType.STONE: 10.0,
-            ResourceType.IRON: 2.0,
-        },
-        unit_costs={UnitType.WORKER: 1},
-        run=actions.build_quarry,
-    ),
-    MenuAction(
-        label="Arcane Tower",
-        cost="1 sorcerer, 250 stone",
-        resource_costs={ResourceType.STONE: 250.0},
-        unit_costs={UnitType.SORCERER: 1},
-        run=actions.build_arcane_tower,
-    ),
-    MenuAction(
-        label="Catapult",
-        cost="5 gold, 100 wood, 200 stone",
-        resource_costs={
-            ResourceType.GOLD: 5.0,
-            ResourceType.WOOD: 100.0,
-            ResourceType.STONE: 200.0,
-        },
-        unit_costs={},
-        run=actions.build_catapult,
-    ),
-    MenuAction(
-        label="Storage",
-        cost="1 worker, 50 wood, 25 stone",
-        resource_costs={ResourceType.WOOD: 50.0, ResourceType.STONE: 25.0},
-        unit_costs={UnitType.WORKER: 1},
-        run=actions.build_storage,
-    ),
-)
-
-
-ONE_TIME_ACTIONS = (
-    MenuAction(
-        label="Hunt",
-        cost="Requires 1 soldier. May lose the soldier or return with food and shell.",
-        resource_costs={},
-        unit_costs={UnitType.SOLDIER: 1},
-        run=actions.hunt,
-        cooldown_key=actions.HUNT_ACTION_KEY,
-    ),
-    MenuAction(
-        label="Patrol",
-        cost=(
-            "3 soldiers, 10 food. Mixed risk with gold, shell income, "
-            "worker, food, and iron rewards"
-        ),
-        resource_costs={ResourceType.FOOD: 10.0},
-        unit_costs={UnitType.SOLDIER: 3},
-        run=actions.patrol,
-        cooldown_key=actions.PATROL_ACTION_KEY,
-    ),
-    MenuAction(
-        label="Expedition",
-        cost=(
-            "1 captain, 10 soldiers, 25 food, 5 gold. High-risk trek with "
-            "major resource, worker, captain, and shell income rewards."
-        ),
-        resource_costs={ResourceType.FOOD: 25.0, ResourceType.GOLD: 5.0},
-        unit_costs={UnitType.CAPTAIN: 1, UnitType.SOLDIER: 10},
-        run=actions.expedition,
-        cooldown_key=actions.EXPEDITION_ACTION_KEY,
-    ),
-    MenuAction(
-        label="Kindle the Pyre",
-        cost="1 sorcerer, 1 arcane tower, 100 wood. Burn offerings for shell or gold.",
-        resource_costs={ResourceType.WOOD: 100.0},
-        unit_costs={UnitType.SORCERER: 1},
-        run=actions.kindle_the_pyre,
-        cooldown_key=actions.KINDLE_PYRE_ACTION_KEY,
-        building_costs={BuildingType.ARCANE_TOWER: 1},
-    ),
-    MenuAction(
-        label="Defend",
-        cost=(
-            "Requires 1 catapult and an active threat. 25-75% chance based on "
-            "catapults and captains, with a 5 minute cooldown."
-        ),
-        resource_costs={},
-        unit_costs={},
-        run=actions.defend,
-        cooldown_key=actions.DEFEND_ACTION_KEY,
-        building_costs={BuildingType.CATAPULT: 1},
-        requires_active_threat=True,
-    ),
-)
-
-
-MENU_COLUMNS = (UNIT_ACTIONS, BUILDING_ACTIONS, ONE_TIME_ACTIONS)
-MENU_ACTIONS = tuple(action for column in MENU_COLUMNS for action in column)
-SHOP_COLUMN_LABELS = ("Units", "Buildings", "Actions")
-AUTOMATED_ACTION_LABELS = {
-    "Hunt": actions.HUNT_ACTION_KEY,
-    "Patrol": actions.PATROL_ACTION_KEY,
-    "Defend": actions.DEFEND_ACTION_KEY,
-}
-AUTOMATED_ACTION_NAMES = {
-    actions.HUNT_ACTION_KEY: "Hunt",
-    actions.PATROL_ACTION_KEY: "Patrol",
-    actions.DEFEND_ACTION_KEY: "Defend",
-}
-AUTOMATION_ENABLE_REQUIREMENTS = {
-    actions.HUNT_ACTION_KEY: "Need a ranger to enable Auto Hunt.",
-    actions.PATROL_ACTION_KEY: "Need a captain to enable Auto Patrol.",
-    actions.DEFEND_ACTION_KEY: "Need a watchpost to enable Auto Defend.",
-}
 
 
 class ShellcromancerApp(App[None]):
@@ -485,38 +286,30 @@ class ShellcromancerApp(App[None]):
     def _refresh_resource_table(self) -> None:
         self.resource_table.clear()
         for resource in ALL_RESOURCES:
-            delta = self.state.last_delta[resource]
-            capped_suffix = " (capped)" if is_resource_capped(self.state, resource) and delta > 0 else ""
             self.resource_table.add_row(
                 resource.value,
                 format_resource_store(self.state, resource),
-                f"{delta:+.1f}/s{capped_suffix}",
+                format_resource_delta(self.state, resource),
             )
 
     def _refresh_unit_table(self) -> None:
         self.unit_table.clear()
-        for menu_action, unit_type in zip(UNIT_ACTIONS, UnitType, strict=True):
-            self.unit_table.add_row(menu_action.label, str(self.state.units[unit_type]))
+        for menu_action in UNIT_ACTIONS:
+            count = owned_count(self.state, menu_action)
+            self.unit_table.add_row(menu_action.label, str(count))
 
     def _refresh_building_table(self) -> None:
         self.building_table.clear()
-        for menu_action, building_type in zip(
-            BUILDING_ACTIONS, BuildingType, strict=True
-        ):
-            self.building_table.add_row(
-                menu_action.label, str(self.state.buildings[building_type])
-            )
+        for menu_action in BUILDING_ACTIONS:
+            count = owned_count(self.state, menu_action)
+            self.building_table.add_row(menu_action.label, str(count))
 
     def _refresh_shop_view(self) -> None:
         self.shop_view.update(format_shop_text(self.state, self.selected_action_index))
 
     def _refresh_selected_view(self) -> None:
-        menu_action = selected_action(self.selected_action_index)
-        readiness = action_status_label(self.state, menu_action)
         self.selected_view.update(
-            f"{action_display_label(self.state, menu_action)}: {readiness}\n"
-            f"Cost: {format_action_cost(menu_action, self.state)}\n"
-            f"Requirements: {format_action_requirements(menu_action, self.state)}"
+            format_selected_text(self.state, self.selected_action_index)
         )
 
     def _refresh_battle_view(self) -> None:
@@ -548,17 +341,13 @@ class ShellcromancerApp(App[None]):
 def effective_resource_costs(
     state: GameState, menu_action: MenuAction
 ) -> dict[ResourceType, float]:
-    if menu_action.run is actions.build_storage:
-        return actions.storage_resource_costs(state)
-    return menu_action.resource_costs
+    return menu_action.effective_resource_costs(state)
 
 
 def effective_unit_costs(
     state: GameState, menu_action: MenuAction
 ) -> dict[UnitType, int]:
-    if menu_action.run is actions.build_storage:
-        return {UnitType.WORKER: actions.storage_worker_cost(state)}
-    return menu_action.unit_costs
+    return menu_action.effective_unit_costs(state)
 
 
 def is_action_affordable(state: GameState, menu_action: MenuAction) -> bool:
@@ -575,7 +364,7 @@ def is_action_affordable(state: GameState, menu_action: MenuAction) -> bool:
     )
     has_buildings = all(
         state.buildings[building] >= amount
-        for building, amount in (menu_action.building_costs or {}).items()
+        for building, amount in menu_action.building_costs.items()
     )
     cooldown_ready = (
         menu_action.cooldown_key is None
@@ -630,7 +419,7 @@ def action_display_label(state: GameState, menu_action: MenuAction) -> str:
 
 
 def automation_key_for_action(menu_action: MenuAction) -> str | None:
-    return AUTOMATED_ACTION_LABELS.get(menu_action.label)
+    return menu_action.automation_key
 
 
 def format_quantity(amount: float | int) -> str:
@@ -675,7 +464,7 @@ def format_action_requirements(
     ]
     requirements.extend(
         format_counted_name(amount, BUILDING_DEFINITIONS[building].name)
-        for building, amount in (menu_action.building_costs or {}).items()
+        for building, amount in menu_action.building_costs.items()
     )
     if menu_action.cooldown_key is not None:
         requirements.append("cooldown ready")
@@ -690,11 +479,8 @@ def format_action_requirements(
 
 
 def owned_text(state: GameState, column: int, row: int) -> str:
-    if column == 0:
-        return str(state.units[tuple(UnitType)[row]])
-    if column == 1:
-        return str(state.buildings[tuple(BuildingType)[row]])
-    return ""
+    count = owned_count(state, MENU_COLUMNS[column][row])
+    return "" if count is None else str(count)
 
 
 def action_index(column: int, row: int) -> int:
@@ -749,29 +535,55 @@ def format_resource_store(state: GameState, resource: ResourceType) -> str:
     return f"{state.resources[resource]:.1f} / {resource_capacity(state, resource):.1f}"
 
 
+def format_resource_delta(state: GameState, resource: ResourceType) -> str:
+    delta = state.last_delta[resource]
+    capped_suffix = (
+        " (capped)" if is_resource_capped(state, resource) and delta > 0 else ""
+    )
+    return f"{delta:+.1f}/s{capped_suffix}"
+
+
+def format_resource_line(state: GameState, resource: ResourceType) -> str:
+    return (
+        f"{resource.value:<6} {format_resource_store(state, resource):>15}   "
+        f"({format_resource_delta(state, resource)})"
+    )
+
+
+def format_inventory_lines(
+    state: GameState, menu_actions: tuple[MenuAction, ...]
+) -> list[str]:
+    return [
+        f"{menu_action.label:<16} {owned_count(state, menu_action)}"
+        for menu_action in menu_actions
+    ]
+
+
+def format_selected_lines(state: GameState, selected_action_index: int) -> list[str]:
+    menu_action = selected_action(selected_action_index)
+    readiness = action_status_label(state, menu_action)
+    return [
+        f"{action_display_label(state, menu_action)}: {readiness}",
+        f"Cost: {format_action_cost(menu_action, state)}",
+        f"Requirements: {format_action_requirements(menu_action, state)}",
+    ]
+
+
+def format_selected_text(state: GameState, selected_action_index: int) -> str:
+    return "\n".join(format_selected_lines(state, selected_action_index))
+
+
 def render_state(state: GameState, selected_action_index: int = 0) -> str:
     if state.is_dead:
         return render_game_over(state)
 
-    resource_lines = []
-    for resource in ALL_RESOURCES:
-        delta = state.last_delta[resource]
-        capped_suffix = " (capped)" if is_resource_capped(state, resource) and delta > 0 else ""
-        resource_lines.append(
-            f"{resource.value:<6} {format_resource_store(state, resource):>15}   ({delta:+.1f}/s{capped_suffix})"
-        )
-
-    menu_action = selected_action(selected_action_index)
-    readiness = action_status_label(state, menu_action)
-    unit_lines = [
-        f"{action.label:<16} {state.units[unit_type]}"
-        for action, unit_type in zip(UNIT_ACTIONS, UnitType, strict=True)
+    resource_lines = [
+        format_resource_line(state, resource) for resource in ALL_RESOURCES
     ]
-    building_lines = [
-        f"{action.label:<16} {state.buildings[building_type]}"
-        for action, building_type in zip(BUILDING_ACTIONS, BuildingType, strict=True)
-    ]
+    unit_lines = format_inventory_lines(state, UNIT_ACTIONS)
+    building_lines = format_inventory_lines(state, BUILDING_ACTIONS)
     shop_lines = format_shop_columns(state, selected_action_index)
+    selected_lines = format_selected_lines(state, selected_action_index)
 
     return "\n".join(
         [
@@ -791,9 +603,7 @@ def render_state(state: GameState, selected_action_index: int = 0) -> str:
             *shop_lines,
             "",
             "Selected",
-            f"{action_display_label(state, menu_action)}: {readiness}",
-            f"Cost: {format_action_cost(menu_action, state)}",
-            f"Requirements: {format_action_requirements(menu_action, state)}",
+            *selected_lines,
             "",
             "Battle Tab",
             *format_battle_lines(state),
@@ -967,13 +777,9 @@ def format_shop_text(state: GameState, selected_action_index: int) -> Text:
 
 
 def render_game_over(state: GameState) -> str:
-    resource_lines = []
-    for resource in ALL_RESOURCES:
-        delta = state.last_delta[resource]
-        capped_suffix = " (capped)" if is_resource_capped(state, resource) and delta > 0 else ""
-        resource_lines.append(
-            f"{resource.value:<6} {format_resource_store(state, resource):>15}   ({delta:+.1f}/s{capped_suffix})"
-        )
+    resource_lines = [
+        format_resource_line(state, resource) for resource in ALL_RESOURCES
+    ]
 
     return "\n".join(
         [
