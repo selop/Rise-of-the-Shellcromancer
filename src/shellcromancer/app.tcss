@@ -1,0 +1,102 @@
+Screen {
+    layout: vertical;
+}
+
+TabbedContent {
+    height: 1fr;
+}
+
+DataTable {
+    width: 100%;
+}
+
+#resource-table, #unit-table, #building-table {
+    border: solid $surface-lighten-1;
+    margin: 0 1 1 1;
+}
+
+.overview-assets {
+    height: auto;
+}
+
+.overview-column {
+    width: 1fr;
+    height: auto;
+}
+
+#shop-columns {
+    height: auto;
+}
+
+#unit-shop-table, #building-shop-table, #action-shop-table {
+    width: 1fr;
+    height: auto;
+    border: solid $surface-lighten-1;
+    margin: 0 1 1 1;
+}
+
+#battle-view, #logs-view, #encyclopedia-view {
+    padding: 1;
+    height: auto;
+    border: solid $surface-lighten-1;
+    margin: 0 1 1 1;
+}
+
+#threats-container {
+    height: auto;
+    margin: 1 0 0 0;
+}
+
+#next-threat-bar {
+    width: 100%;
+    margin: 1 0 0 0;
+}
+
+#threats-container ProgressBar {
+    width: 100%;
+}
+
+#next-threat-bar Bar, #threats-container Bar {
+    width: 1fr;
+}
+
+#next-threat-bar .bar--bar {
+    color: $warning;
+}
+
+#threats-container .bar--bar {
+    color: $error;
+}
+
+#status {
+    height: auto;
+    min-height: 6;
+    padding: 1 2;
+    margin: 0 1;
+    border: solid $accent;
+    background: $surface;
+}
+
+#selected {
+    padding: 1 1;
+    min-height: 4;
+    border: solid $surface-lighten-1;
+    margin: 0 1 1 1;
+}
+
+#resource-table, #unit-table, #building-table,
+#unit-shop-table, #building-shop-table, #action-shop-table,
+#selected, #battle-view, #logs-view, #encyclopedia-view, #status {
+    border-title-color: $accent;
+    border-title-style: bold;
+}
+
+/* The shop selection is drawn with an explicit marker, so the built-in row
+   cursor is hidden (kept enabled only so mouse clicks still select). */
+#unit-shop-table > .datatable--cursor,
+#building-shop-table > .datatable--cursor,
+#action-shop-table > .datatable--cursor {
+    background: transparent;
+    color: $foreground;
+    text-style: none;
+}

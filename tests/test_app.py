@@ -1,6 +1,8 @@
 import asyncio
 import json
+from pathlib import Path
 
+from textual.coordinate import Coordinate
 from textual.widgets import DataTable, Static, TabbedContent
 
 from shellcromancer.actions import (
@@ -17,13 +19,14 @@ from shellcromancer.app import (
     action_index,
     format_action_cost,
     format_action_requirements,
+    format_shop_tooltip,
     is_action_affordable,
     render_state,
 )
 from shellcromancer.buildings import BuildingType
 from shellcromancer.game_state import GameState, record_action_message
 from shellcromancer.resources import ResourceType
-from shellcromancer.threats import ActiveThreat
+from shellcromancer.threats import THREAT_ROLL_SECONDS, ActiveThreat
 from shellcromancer.units import UnitType
 
 
@@ -137,8 +140,10 @@ def test_app_uses_scribe_reign_and_battle_tabs(tmp_path) -> None:
             resource_table = app.query_one("#resource-table", DataTable)
             unit_table = app.query_one("#unit-table", DataTable)
             building_table = app.query_one("#building-table", DataTable)
-            shop_view = app.query_one("#shop-view", Static)
-            battle_view = app.query_one("#battle-view", Static)
+            unit_shop_table = app.query_one("#unit-shop-table", DataTable)
+            building_shop_table = app.query_one("#building-shop-table", DataTable)
+            action_shop_table = app.query_one("#action-shop-table", DataTable)
+            battle_summary = app.query_one("#battle-summary", Static)
             encyclopedia_view = app.query_one("#encyclopedia-view", Static)
 
             assert tabs.active == "scribe-tab"
@@ -148,9 +153,14 @@ def test_app_uses_scribe_reign_and_battle_tabs(tmp_path) -> None:
             assert building_table.row_count == len(BuildingType)
             assert unit_table.get_row_at(0) == ["Worker", "0"]
             assert building_table.get_row_at(0) == ["Farm", "0"]
-            assert str(shop_view.content).startswith("Units")
-            assert "Next threat roll: 10:00" in str(battle_view.content)
-            assert "No active threats." in str(battle_view.content)
+            assert unit_shop_table.row_count == 7
+            assert building_shop_table.row_count == 6
+            assert action_shop_table.row_count == 5
+            assert "Worker" in str(unit_shop_table.get_row_at(0)[0])
+            assert "Farm" in str(building_shop_table.get_row_at(0)[0])
+            assert "Hunt" in str(action_shop_table.get_row_at(0)[0])
+            assert "Next threat roll: 10:00" in str(battle_summary.content)
+            assert "No active threats." in str(battle_summary.content)
             assert "Resources" in str(encyclopedia_view.content)
             assert "Goblin Raid" in str(encyclopedia_view.content)
 
@@ -158,10 +168,13 @@ def test_app_uses_scribe_reign_and_battle_tabs(tmp_path) -> None:
 
 
 def test_app_frames_major_panels() -> None:
-    css = ShellcromancerApp.CSS
+    import shellcromancer.app as app_module
+
+    css_path = Path(app_module.__file__).parent / ShellcromancerApp.CSS_PATH
+    css = css_path.read_text(encoding="utf-8")
 
     assert "#resource-table, #unit-table, #building-table" in css
-    assert "#shop-view" in css
+    assert "#unit-shop-table, #building-shop-table, #action-shop-table" in css
     assert "#battle-view" in css
     assert "#logs-view" in css
     assert "#encyclopedia-view" in css
@@ -792,3 +805,78 @@ def test_app_marks_loaded_zero_food_save_dead(tmp_path) -> None:
     app = ShellcromancerApp(save_path=save_path)
 
     assert app.state.is_dead is True
+
+
+def test_format_shop_tooltip_includes_recipe_and_production() -> None:
+    state = GameState()
+
+    worker = next(action for action in MENU_ACTIONS if action.label == "Worker")
+    worker_tip = format_shop_tooltip(state, worker)
+    assert "Worker" in worker_tip
+    assert "Status: Ready" in worker_tip
+    assert "Cost: 10 shell" in worker_tip
+    assert "Upkeep: +0.1 food/s" in worker_tip
+
+    farm = next(action for action in MENU_ACTIONS if action.label == "Farm")
+    farm_tip = format_shop_tooltip(state, farm)
+    assert "Produces: +0.2 food/s" in farm_tip
+    assert "Requires: 1 worker" in farm_tip
+
+    storage = next(action for action in MENU_ACTIONS if action.label == "Storage")
+    assert (
+        "Effect: +100 capacity to every resource"
+        in format_shop_tooltip(state, storage)
+    )
+
+
+def test_shop_table_hover_sets_recipe_tooltip(tmp_path) -> None:
+    async def run_app() -> None:
+        app = ShellcromancerApp(save_path=tmp_path / "save.json")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            app.unit_shop_table.hover_coordinate = Coordinate(0, 1)
+            await pilot.pause()
+            assert app.unit_shop_table.tooltip is not None
+            assert "Worker" in app.unit_shop_table.tooltip
+
+            app.action_shop_table.hover_coordinate = Coordinate(2, 0)
+            await pilot.pause()
+            assert "Expedition" in app.action_shop_table.tooltip
+
+            # Hovering the header row (no recipe) clears the tooltip.
+            app.unit_shop_table.hover_coordinate = Coordinate(-1, 0)
+            await pilot.pause()
+            assert app.unit_shop_table.tooltip is None
+
+    asyncio.run(run_app())
+
+
+def test_battle_tab_mounts_and_removes_threat_bars(tmp_path) -> None:
+    async def run_app() -> None:
+        app = ShellcromancerApp(save_path=tmp_path / "save.json")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            assert app._threat_rows == []
+            assert app.next_threat_bar.total == THREAT_ROLL_SECONDS
+            assert app.next_threat_bar.progress == app.state.threat_roll_cooldown
+
+            app.state.active_threats.append(
+                ActiveThreat(key="goblin_raid", remaining_seconds=150.0)
+            )
+            app._refresh_view()
+            await pilot.pause()
+
+            assert len(app._threat_rows) == 1
+            assert "Active threats: 1" in str(app.battle_summary.content)
+            assert len(app.threats_container.query("ProgressBar")) == 1
+
+            app.state.active_threats.clear()
+            app._refresh_view()
+            await pilot.pause()
+
+            assert app._threat_rows == []
+            assert "No active threats." in str(app.battle_summary.content)
+
+    asyncio.run(run_app())

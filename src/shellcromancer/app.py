@@ -1,13 +1,17 @@
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.coordinate import Coordinate
+from textual.theme import Theme
 from textual.widgets import (
     DataTable,
     Footer,
     Header,
+    ProgressBar,
     Static,
     TabbedContent,
     TabPane,
@@ -15,13 +19,11 @@ from textual.widgets import (
 
 from shellcromancer.buildings import BUILDING_DEFINITIONS, BuildingType
 from shellcromancer.catalog import (
-    AUTOMATED_ACTION_LABELS,
     AUTOMATED_ACTION_NAMES,
     AUTOMATION_ENABLE_REQUIREMENTS,
     BUILDING_ACTIONS,
     MENU_ACTIONS,
     MENU_COLUMNS,
-    ONE_TIME_ACTIONS,
     SHOP_COLUMN_LABELS,
     UNIT_ACTIONS,
     MenuAction,
@@ -35,9 +37,15 @@ from shellcromancer.economy import (
 from shellcromancer.game_state import GameState, record_action_message
 from shellcromancer.persistence import load_state, save_state
 from shellcromancer.resources import ALL_RESOURCES, ResourceType
-from shellcromancer.storage import is_resource_capped, resource_capacity
+from shellcromancer.storage import (
+    STORAGE_CAPACITY_BONUS,
+    is_resource_capped,
+    resource_capacity,
+)
 from shellcromancer.threats import (
     THREAT_DEFINITIONS,
+    THREAT_ROLL_SECONDS,
+    ActiveThreat,
     ThreatDefinition,
     scaled_threat_countdown,
     scaled_threat_damage,
@@ -45,65 +53,85 @@ from shellcromancer.threats import (
 from shellcromancer.units import UNIT_DEFINITIONS, UnitType
 
 
+SHELLCROMANCER_THEME = Theme(
+    name="shellcromancer",
+    primary="#9d7bff",  # arcane violet — active tab, table cursor
+    secondary="#5b3a8c",
+    accent="#d9b44a",  # tarnished gold — borders, titles, footer keys
+    foreground="#e7e2d3",  # bone white
+    background="#0c0a12",  # the void
+    surface="#16121f",  # panels
+    panel="#1d1730",
+    success="#6ee087",
+    warning="#e8b24a",
+    error="#e0566c",
+    dark=True,
+)
+
+
+class ShopTable(DataTable):
+    """A shop column that shows a per-row recipe tooltip while hovered."""
+
+    def __init__(
+        self,
+        column_index: int,
+        tooltip_provider: Callable[[int, int], str | None],
+        **kwargs: object,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._column_index = column_index
+        self._tooltip_provider = tooltip_provider
+
+    def watch_hover_coordinate(self, old: Coordinate, value: Coordinate) -> None:
+        super().watch_hover_coordinate(old, value)
+        column_actions = MENU_COLUMNS[self._column_index]
+        if 0 <= value.row < len(column_actions):
+            self.tooltip = self._tooltip_provider(self._column_index, value.row)
+        else:
+            self.tooltip = None
+
+
+class ThreatRow(Vertical):
+    """An active threat shown as a description plus a draining countdown bar."""
+
+    DEFAULT_CSS = """
+    ThreatRow {
+        height: auto;
+        margin: 0 0 1 0;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._info = Static()
+        self._bar = ProgressBar(total=100, show_eta=False, show_percentage=False)
+
+    def compose(self) -> ComposeResult:
+        yield self._info
+        yield self._bar
+
+    def update_threat(self, threat: ActiveThreat, state: GameState) -> None:
+        remaining = max(0.0, threat.remaining_seconds)
+        definition = THREAT_DEFINITIONS.get(threat.key)
+        if definition is not None:
+            total = max(1.0, scaled_threat_countdown(definition, state))
+            lines = [
+                f"[b]{definition.name}[/] — resolves in {format_cooldown(remaining)}",
+                definition.description,
+                f"Effect: {format_threat_effect(definition, state)}",
+            ]
+        else:
+            total = max(1.0, remaining)
+            lines = [f"[b]{threat.key}[/] — {format_cooldown(remaining)}"]
+        self._info.update("\n".join(lines))
+        self._bar.update(total=total, progress=min(total, remaining))
+
+
 class ShellcromancerApp(App[None]):
     TITLE = "Rise of the Shellcromancer"
 
-    CSS = """
-    Screen {
-        layout: vertical;
-    }
-
-    TabbedContent {
-        height: 1fr;
-    }
-
-    DataTable {
-        width: 100%;
-    }
-
-    #resource-table, #unit-table, #building-table {
-        border: solid $surface-lighten-1;
-        margin: 0 1 1 1;
-    }
-
-    .overview-assets {
-        height: auto;
-    }
-
-    .overview-column {
-        width: 1fr;
-        height: auto;
-    }
-
-    #shop-view, #battle-view, #logs-view, #encyclopedia-view {
-        padding: 1;
-        height: auto;
-        border: solid $surface-lighten-1;
-        margin: 0 1 1 1;
-    }
-
-    #status {
-        height: auto;
-        min-height: 6;
-        padding: 1 2;
-        margin: 0 1;
-        border: solid $accent;
-        background: $surface;
-    }
-
-    .section-title {
-        padding: 1 1 0 1;
-        text-style: bold;
-    }
-
-    #selected {
-        padding: 1 1;
-        min-height: 4;
-        border: solid $surface-lighten-1;
-        margin: 0 1 1 1;
-    }
-
-    """
+    # External stylesheet so `textual run --dev` can hot-reload it live.
+    CSS_PATH = "app.tcss"
 
     BINDINGS = [
         Binding("up,k", "select_previous", "Previous row", priority=True),
@@ -128,40 +156,66 @@ class ShellcromancerApp(App[None]):
         mark_dead_if_food_depleted(self.state)
         self.selected_action_index = 0
         self.resource_table = DataTable(
-            id="resource-table", cursor_type="row", zebra_stripes=True
+            id="resource-table", cursor_type="none", zebra_stripes=True
         )
         self.unit_table = DataTable(
-            id="unit-table", cursor_type="row", zebra_stripes=True
+            id="unit-table", cursor_type="none", zebra_stripes=True
         )
         self.building_table = DataTable(
-            id="building-table", cursor_type="row", zebra_stripes=True
+            id="building-table", cursor_type="none", zebra_stripes=True
         )
-        self.shop_view = Static(id="shop-view")
+        self.shop_tables = tuple(
+            ShopTable(
+                column_index=column_index,
+                tooltip_provider=self._shop_tooltip,
+                id=f"{name}-shop-table",
+                cursor_type="row",
+                zebra_stripes=True,
+            )
+            for column_index, name in enumerate(("unit", "building", "action"))
+        )
+        self.unit_shop_table, self.building_shop_table, self.action_shop_table = (
+            self.shop_tables
+        )
         self.selected_view = Static(id="selected")
-        self.battle_view = Static(id="battle-view")
+        self.battle_summary = Static(id="battle-summary")
+        self.next_threat_bar = ProgressBar(
+            total=THREAT_ROLL_SECONDS,
+            show_eta=False,
+            show_percentage=False,
+            id="next-threat-bar",
+        )
+        self.threats_container = Vertical(id="threats-container")
+        self._threat_rows: list[ThreatRow] = []
         self.logs_view = Static(id="logs-view")
         self.encyclopedia_view = Static(id="encyclopedia-view")
         self.status_view = Static(id="status")
         self.tables_ready = False
+        self.shop_tables_ready = False
+        self._suppress_shop_highlight = False
+        self._last_toasted_message = self.state.last_action_message
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with TabbedContent(initial="scribe-tab"):
             with TabPane("Scribe", id="scribe-tab"):
-                yield Static("Scribe", classes="section-title")
                 yield self.resource_table
                 with Horizontal(classes="overview-assets"):
                     with Vertical(classes="overview-column"):
-                        yield Static("Units", classes="section-title")
                         yield self.unit_table
                     with Vertical(classes="overview-column"):
-                        yield Static("Buildings", classes="section-title")
                         yield self.building_table
             with TabPane("Reign", id="reign-tab"):
-                yield self.shop_view
+                with Horizontal(id="shop-columns", classes="overview-assets"):
+                    yield self.unit_shop_table
+                    yield self.building_shop_table
+                    yield self.action_shop_table
                 yield self.selected_view
             with TabPane("Battle", id="battle-tab"):
-                yield self.battle_view
+                with Vertical(id="battle-view"):
+                    yield self.battle_summary
+                    yield self.next_threat_bar
+                    yield self.threats_container
             with TabPane("Logs", id="logs-tab"):
                 yield self.logs_view
             with TabPane("Encyclopedia", id="encyclopedia-tab"):
@@ -170,12 +224,39 @@ class ShellcromancerApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.register_theme(SHELLCROMANCER_THEME)
+        self.theme = SHELLCROMANCER_THEME.name
         self.resource_table.add_columns("Resource", "Stored", "Per Second")
         self.unit_table.add_columns("Unit", "Owned")
         self.building_table.add_columns("Building", "Owned")
+        self._build_shop_tables()
+        self._apply_border_titles()
         self.tables_ready = True
         self._refresh_view()
+        # Ignore the cursor-highlight messages the shop tables emit while being
+        # populated; only honour highlights from genuine user clicks afterwards.
+        self.call_after_refresh(self._enable_shop_interaction)
         self.set_interval(1.0, self._on_tick)
+
+    def _build_shop_tables(self) -> None:
+        for column_index, table in enumerate(self.shop_tables):
+            table.border_title = SHOP_COLUMN_LABELS[column_index]
+            table.add_columns("Item", "Owned", "Status")
+            for menu_action in MENU_COLUMNS[column_index]:
+                table.add_row(menu_action.label, "", "")
+
+    def _apply_border_titles(self) -> None:
+        self.resource_table.border_title = "Stores"
+        self.unit_table.border_title = "Units"
+        self.building_table.border_title = "Buildings"
+        self.selected_view.border_title = "Selected"
+        self.query_one("#battle-view").border_title = "Battle"
+        self.logs_view.border_title = "Logs"
+        self.encyclopedia_view.border_title = "Codex"
+        self.status_view.border_title = "Status"
+
+    def _enable_shop_interaction(self) -> None:
+        self.shop_tables_ready = True
 
     def _on_tick(self) -> None:
         tick(self.state)
@@ -276,12 +357,13 @@ class ShellcromancerApp(App[None]):
         self._refresh_resource_table()
         self._refresh_unit_table()
         self._refresh_building_table()
-        self._refresh_shop_view()
+        self._refresh_shop_tables()
         self._refresh_selected_view()
-        self._refresh_battle_view()
+        self._refresh_battle()
         self._refresh_logs_view()
         self._refresh_encyclopedia_view()
         self._refresh_status_view()
+        self._flush_notifications()
 
     def _refresh_resource_table(self) -> None:
         self.resource_table.clear()
@@ -304,16 +386,107 @@ class ShellcromancerApp(App[None]):
             count = owned_count(self.state, menu_action)
             self.building_table.add_row(menu_action.label, str(count))
 
-    def _refresh_shop_view(self) -> None:
-        self.shop_view.update(format_shop_text(self.state, self.selected_action_index))
+    def _refresh_shop_tables(self) -> None:
+        selected_column, selected_row = selected_position(self.selected_action_index)
+        for column_index, table in enumerate(self.shop_tables):
+            menu_actions = MENU_COLUMNS[column_index]
+            for row_index, menu_action in enumerate(menu_actions):
+                is_selected = (
+                    column_index == selected_column and row_index == selected_row
+                )
+                status_style = action_status_style(self.state, menu_action)
+                cell_style = (
+                    f"reverse bold {status_style}" if is_selected else status_style
+                )
+                marker = "▸ " if is_selected else "  "
+                label = action_display_label(self.state, menu_action)
+                owned = owned_text(self.state, column_index, row_index)
+                status = action_status_text(self.state, menu_action)
+                cells = (f"{marker}{label}", owned, status)
+                for col, value in enumerate(cells):
+                    table.update_cell_at(
+                        Coordinate(row_index, col), Text(value, style=cell_style)
+                    )
+        self._sync_shop_cursor(selected_column, selected_row)
+
+    def _sync_shop_cursor(self, column: int, row: int) -> None:
+        self._suppress_shop_highlight = True
+        try:
+            self.shop_tables[column].move_cursor(row=row, scroll=False)
+        finally:
+            self._suppress_shop_highlight = False
+
+    def _shop_tooltip(self, column: int, row: int) -> str:
+        return format_shop_tooltip(self.state, MENU_COLUMNS[column][row])
+
+    def on_data_table_row_highlighted(
+        self, event: DataTable.RowHighlighted
+    ) -> None:
+        if self._suppress_shop_highlight or not self.shop_tables_ready:
+            return
+        for column_index, table in enumerate(self.shop_tables):
+            if event.data_table is table:
+                new_index = action_index(column_index, event.cursor_row)
+                if new_index != self.selected_action_index:
+                    self.selected_action_index = new_index
+                    self._refresh_view()
+                return
+
+    def _flush_notifications(self) -> None:
+        message = self.state.last_action_message
+        if message == self._last_toasted_message:
+            return
+        self._last_toasted_message = message
+        low = message.lower()
+        notable = ("result:", "threat", "starved", "auto ", "will now", "struck")
+        if not any(token in low for token in notable):
+            return
+        if "starved" in low:
+            severity, title = "error", "Defeat"
+        elif any(
+            token in low
+            for token in (
+                "new threat",
+                "struck",
+                "did not return",
+                "wiped out",
+                "ambushed",
+                "failed",
+            )
+        ):
+            severity, title = "warning", "Warning"
+        else:
+            severity, title = "information", "Report"
+        self.notify(message, title=title, severity=severity, timeout=6.0)
 
     def _refresh_selected_view(self) -> None:
         self.selected_view.update(
             format_selected_text(self.state, self.selected_action_index)
         )
 
-    def _refresh_battle_view(self) -> None:
-        self.battle_view.update(format_battle_text(self.state))
+    def _refresh_battle(self) -> None:
+        threats = self.state.active_threats
+        summary = f"Next threat roll: {format_cooldown(self.state.threat_roll_cooldown)}"
+        summary += (
+            "\n\nNo active threats."
+            if not threats
+            else f"\n\nActive threats: {len(threats)}"
+        )
+        self.battle_summary.update(summary)
+        self.next_threat_bar.update(
+            total=THREAT_ROLL_SECONDS,
+            progress=max(0.0, self.state.threat_roll_cooldown),
+        )
+
+        while len(self._threat_rows) < len(threats):
+            row = ThreatRow()
+            self._threat_rows.append(row)
+            self.threats_container.mount(row)
+        while len(self._threat_rows) > len(threats):
+            self._threat_rows.pop().remove()
+
+        for row, threat in zip(self._threat_rows, threats):
+            row.update_threat(threat, self.state)
 
     def _refresh_logs_view(self) -> None:
         self.logs_view.update(format_logs_text(self.state))
@@ -573,6 +746,30 @@ def format_selected_text(state: GameState, selected_action_index: int) -> str:
     return "\n".join(format_selected_lines(state, selected_action_index))
 
 
+def format_shop_tooltip(state: GameState, menu_action: MenuAction) -> str:
+    lines = [
+        action_display_label(state, menu_action),
+        f"Status: {action_status_text(state, menu_action)}",
+        f"Cost: {format_action_cost(menu_action, state)}",
+        f"Requires: {format_action_requirements(menu_action, state)}",
+    ]
+    if menu_action.owned_unit is not None:
+        definition = UNIT_DEFINITIONS[menu_action.owned_unit]
+        lines.append(f"Produces: {format_rate_map(definition.production)}")
+        lines.append(f"Upkeep: {format_rate_map(definition.upkeep)}")
+    elif menu_action.owned_building is not None:
+        building_type = menu_action.owned_building
+        if building_type is BuildingType.STORAGE:
+            lines.append(
+                f"Effect: +{STORAGE_CAPACITY_BONUS:g} capacity to every resource"
+            )
+        else:
+            definition = BUILDING_DEFINITIONS[building_type]
+            lines.append(f"Produces: {format_rate_map(definition.production)}")
+            lines.append(f"Upkeep: {format_rate_map(definition.upkeep)}")
+    return "\n".join(lines)
+
+
 def render_state(state: GameState, selected_action_index: int = 0) -> str:
     if state.is_dead:
         return render_game_over(state)
@@ -618,10 +815,6 @@ def render_state(state: GameState, selected_action_index: int = 0) -> str:
             *format_story_lines(state),
         ]
     )
-
-
-def format_battle_text(state: GameState) -> str:
-    return "\n".join(format_battle_lines(state))
 
 
 def format_logs_text(state: GameState) -> str:
@@ -744,36 +937,6 @@ def format_shop_columns(state: GameState, selected_action_index: int) -> list[st
         f"{unit:<34} {building:<40} {action}"
         for unit, building, action in rows
     ]
-
-
-def format_shop_text(state: GameState, selected_action_index: int) -> Text:
-    selected_column, selected_row = selected_position(selected_action_index)
-    widths = (34, 40, 40)
-    text = Text()
-
-    for label, width in zip(SHOP_COLUMN_LABELS, widths, strict=True):
-        text.append(label.ljust(width), style="bold")
-    text.append("\n")
-
-    max_rows = max(len(column) for column in MENU_COLUMNS)
-    for row in range(max_rows):
-        for column, menu_actions in enumerate(MENU_COLUMNS):
-            width = widths[column]
-            if row >= len(menu_actions):
-                text.append(" " * width)
-                continue
-
-            menu_action = menu_actions[row]
-            label = action_display_label(state, menu_action)
-            marker = ">" if column == selected_column and row == selected_row else " "
-            cell = f"{marker} {label:<14} {owned_text(state, column, row):<5}"
-            style = action_status_style(state, menu_action)
-            if column == selected_column and row == selected_row:
-                style = f"reverse {style}"
-            text.append(cell[:width].ljust(width), style=style)
-        text.append("\n")
-
-    return text
 
 
 def render_game_over(state: GameState) -> str:
